@@ -31,9 +31,9 @@ MODELS_TO_DOWNLOAD = {
         "local_dir": MODEL_CACHE_DIR / "models--stepfun-ai--Step-Audio-EditX",
     },
     "bgm": {
-        "repo_id": "ACE-Step/ACE-Step-v1-5-4b-xl-turbo",
+        "repo_id": "ace-step/ACE-Step-v1-5-4b-xl-turbo",
         "revision": "main",
-        "local_dir": MODEL_CACHE_DIR / "models--ACE-Step--ACE-Step-v1-5-4b-xl-turbo",
+        "local_dir": MODEL_CACHE_DIR / "models--ace-step--ACE-Step-v1-5-4b-xl-turbo",
     },
     "captions": {
         "repo_id": "usefulsensors/moonshine-base",
