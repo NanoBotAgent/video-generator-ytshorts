@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import torch
-import torchaudio
 import numpy as np
 from transformers import AutoModel, AutoTokenizer
 from huggingface_hub import snapshot_download
@@ -133,11 +132,13 @@ class TTSGenerator:
             if hasattr(self.model, "config") and hasattr(self.model.config, "sampling_rate"):
                 model_sr = self.model.config.sampling_rate
                 if model_sr != target_sr:
+                    import torchaudio
                     audio_tensor = torchaudio.functional.resample(
                         audio_tensor, model_sr, target_sr
                     )
 
             output_path = self.output_dir / "voiceover.wav"
+            import torchaudio
             torchaudio.save(
                 str(output_path),
                 audio_tensor.unsqueeze(0),
