@@ -1,0 +1,24 @@
+# PyTorch CPU-only
+torch==2.4.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+torchvision==0.19.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+torchaudio==2.4.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Core ML libraries
+transformers==4.44.0
+accelerate==0.33.0
+safetensors==0.4.4
+huggingface-hub==0.24.0
+
+# Audio processing
+librosa==0.10.2
+soundfile==0.12.1
+scipy==1.13.0
+numpy==1.26.0
+
+# Caption generation
+useful-moonshine==0.1.2
+
+# Utilities
+tqdm==4.66.0
+pyyaml==6.0.1
+requests==2.32.0
