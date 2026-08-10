@@ -62,7 +62,9 @@ jobs:
             fonts-dejavu-core \
             fonts-liberation2 \
             fonts-noto-color-emoji \
-            ca-certificates
+            ca-certificates \
+            espeak-ng \
+            libespeak-ng1
           fc-cache -f -v
 
       - name: Cache Hugging Face models
@@ -73,10 +75,6 @@ jobs:
           restore-keys: |
             hf-models-${{ runner.os }}-
 
-      - name: Install PyTorch CPU
-        run: |
-          pip install --no-cache-dir torch==2.4.0+cpu torchvision==0.19.0+cpu torchaudio==2.4.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
-
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
@@ -85,7 +83,7 @@ jobs:
 
       - name: Install Node dependencies
         run: |
-          npm install --prefer-offline --no-audit --no-fund
+          npm ci --prefer-offline --no-audit --no-fund
           npm list timecut
 
       - name: Install Playwright Chromium
@@ -148,3 +146,21 @@ jobs:
           path: output/
           retention-days: 3
           compression-level: 6
+
+      - name: Display summary
+        if: always()
+        run: |
+          echo "## Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          if [ -f output/voiceover.wav ]; then echo "| TTS | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| TTS | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          if [ -f output/bgm.wav ]; then echo "| BGM | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| BGM | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          if [ -f output/captions.ass ]; then echo "| Captions | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| Captions | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          if [ -f output/visuals.mp4 ]; then echo "| Visuals | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| Visuals | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          if [ -f output/final_video.mp4 ]; then echo "| Assembly | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| Assembly | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f output/final_video.mp4 ]; then
+            SIZE=$(du -h output/final_video.mp4 | cut -f1)
+            echo "**Final Video:** ${SIZE}" >> $GITHUB_STEP_SUMMARY
+          fi
