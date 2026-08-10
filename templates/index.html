@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1080, height=1920">
+    <title>Video Visual Template</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="background-gradient" id="bgGradient"></div>
+        <div class="ambient-particles" id="particles"></div>
+
+        <header class="top-bar">
+            <div class="status-indicator">
+                <span class="dot"></span>
+                <span class="label">LIVE</span>
+            </div>
+            <div class="time-display" id="timeDisplay">00:00</div>
+            <div class="metric">
+                <span class="value" id="cpuLoad">12%</span>
+                <span class="unit">CPU</span>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <div class="glass-card primary-card">
+                <div class="card-header">
+                    <h1 class="title">AI PIPELINE</h1>
+                    <div class="badge">AUTOMATED</div>
+                </div>
+                <div class="card-body">
+                    <div class="progress-ring" id="progressRing">
+                        <svg viewBox="0 0 120 120">
+                            <defs>
+                                <linearGradient id="progressGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                    <stop offset="0%" stop-color="#0064ff"></stop>
+                                    <stop offset="100%" stop-color="#00ff88"></stop>
+                                </linearGradient>
+                            </defs>
+                            <circle class="progress-bg" cx="60" cy="60" r="54"></circle>
+                            <circle class="progress-fill" id="progressCircle" cx="60" cy="60" r="54"></circle>
+                        </svg>
+                        <div class="progress-text">
+                            <span class="percent" id="percentValue">0%</span>
+                            <span class="label">COMPLETE</span>
+                        </div>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat">
+                            <span class="stat-value" id="stepCount">0</span>
+                            <span class="stat-label">STEPS</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" id="duration">0.0s</span>
+                            <span class="stat-label">DURATION</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" id="memory">0MB</span>
+                            <span class="stat-label">MEMORY</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <div class="pipeline-steps" id="pipelineSteps">
+                        <div class="step active" data-step="1">
+                            <span class="step-icon">🎙</span>
+                            <span class="step-name">TTS</span>
+                        </div>
+                        <div class="step" data-step="2">
+                            <span class="step-icon">🎵</span>
+                            <span class="step-name">BGM</span>
+                        </div>
+                        <div class="step" data-step="3">
+                            <span class="step-icon">📝</span>
+                            <span class="step-name">CAPTIONS</span>
+                        </div>
+                        <div class="step" data-step="4">
+                            <span class="step-icon">🎬</span>
+                            <span class="step-name">VISUALS</span>
+                        </div>
+                        <div class="step" data-step="5">
+                            <span class="step-icon">⚙</span>
+                            <span class="step-name">ASSEMBLY</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-card secondary-card">
+                <div class="card-header">
+                    <h2 class="subtitle">SYSTEM METRICS</h2>
+                </div>
+                <div class="card-body">
+                    <div class="metric-bars" id="metricBars">
+                        <div class="metric-bar">
+                            <div class="metric-info">
+                                <span class="metric-name">TTS Generation</span>
+                                <span class="metric-value" id="ttsTime">0.0s</span>
+                            </div>
+                            <div class="bar-container">
+                                <div class="bar-fill" id="ttsBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="metric-bar">
+                            <div class="metric-info">
+                                <span class="metric-name">BGM Synthesis</span>
+                                <span class="metric-value" id="bgmTime">0.0s</span>
+                            </div>
+                            <div class="bar-container">
+                                <div class="bar-fill" id="bgmBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="metric-bar">
+                            <div class="metric-info">
+                                <span class="metric-name">Caption Alignment</span>
+                                <span class="metric-value" id="capTime">0.0s</span>
+                            </div>
+                            <div class="bar-container">
+                                <div class="bar-fill" id="capBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="metric-bar">
+                            <div class="metric-info">
+                                <span class="metric-name">Visual Rendering</span>
+                                <span class="metric-value" id="visTime">0.0s</span>
+                            </div>
+                            <div class="bar-container">
+                                <div class="bar-fill" id="visBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="metric-bar">
+                            <div class="metric-info">
+                                <span class="metric-name">FFmpeg Assembly</span>
+                                <span class="metric-value" id="asmTime">0.0s</span>
+                            </div>
+                            <div class="bar-container">
+                                <div class="bar-fill" id="asmBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-card log-card">
+                <div class="card-header">
+                    <h2 class="subtitle">EXECUTION LOG</h2>
+                </div>
+                <div class="card-body">
+                    <div class="log-container" id="logContainer">
+                        <div class="log-entry">
+                            <span class="log-time">[00:00:00]</span>
+                            <span class="log-level info">INFO</span>
+                            <span class="log-message">Pipeline initialized</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="bottom-bar">
+            <div class="brand">
+                <span class="logo">▲</span>
+                <span class="name">VIDEO-GEN</span>
+                <span class="version">v1.0.0</span>
+            </div>
+            <div class="credits">CPU-Only • Zero GPU • GitHub Actions</div>
+        </footer>
+    </div>
+
+    <script>
+        const startTime = Date.now();
+        const progressCircle = document.getElementById('progressCircle');
+        const circumference = 2 * Math.PI * 54;
+        progressCircle.style.strokeDasharray = circumference;
+        progressCircle.style.strokeDashoffset = circumference;
+
+        function updateTime() {
+            const elapsed = (Date.now() - startTime) / 1000;
+            const mins = Math.floor(elapsed / 60).toString().padStart(2, '0');
+            const secs = Math.floor(elapsed % 60).toString().padStart(2, '0');
+            document.getElementById('timeDisplay').textContent = `${mins}:${secs}`;
+        }
+
+        function updateProgress(percent) {
+            const offset = circumference * (1 - percent / 100);
+            progressCircle.style.strokeDashoffset = offset;
+            document.getElementById('percentValue').textContent = `${Math.round(percent)}%`;
+        }
+
+        function animateBackground() {
+            const bg = document.getElementById('bgGradient');
+            const t = Date.now() * 0.0001;
+            bg.style.background = `
+                radial-gradient(ellipse at ${50 + Math.sin(t) * 20}% ${50 + Math.cos(t) * 20}%, 
+                    rgba(0, 100, 255, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at ${50 + Math.cos(t * 0.7) * 30}% ${50 + Math.sin(t * 0.7) * 30}%, 
+                    rgba(255, 50, 150, 0.1) 0%, transparent 50%),
+                linear-gradient(180deg, #0a0a0f 0%, #12121a 50%, #0a0a0f 100%)
+            `;
+        }
+
+        function createParticles() {
+            const container = document.getElementById('particles');
+            for (let i = 0; i < 30; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                particle.style.left = `${Math.random() * 100}%`;
+                particle.style.top = `${Math.random() * 100}%`;
+                particle.style.animationDelay = `${Math.random() * 20}s`;
+                particle.style.animationDuration = `${15 + Math.random() * 10}s`;
+                container.appendChild(particle);
+            }
+        }
+
+        function animateCpuLoad() {
+            const cpuEl = document.getElementById('cpuLoad');
+            const base = 12;
+            const variation = Math.sin(Date.now() * 0.001) * 8 + Math.random() * 5;
+            cpuEl.textContent = `${Math.max(5, Math.min(45, base + variation)).toFixed(0)}%`;
+        }
+
+        function addLogEntry(message, level = 'info') {
+            const container = document.getElementById('logContainer');
+            const now = new Date();
+            const timeStr = now.toTimeString().slice(0, 8);
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `
+                <span class="log-time">[${timeStr}]</span>
+                <span class="log-level ${level}">${level.toUpperCase()}</span>
+                <span class="log-message">${message}</span>
+            `;
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+            if (container.children.length > 50) {
+                container.removeChild(container.firstChild);
+            }
+        }
+
+        function updateStep(stepNum) {
+            document.querySelectorAll('.step').forEach((el, i) => {
+                el.classList.remove('active', 'completed');
+                if (i + 1 < stepNum) el.classList.add('completed');
+                else if (i + 1 === stepNum) el.classList.add('active');
+            });
+            document.getElementById('stepCount').textContent = stepNum;
+        }
+
+        function updateMetricBar(id, value, maxVal = 100) {
+            const bar = document.getElementById(id);
+            if (bar) bar.style.width = `${Math.min(100, (value / maxVal) * 100)}%`;
+        }
+
+        function simulationLoop() {
+            updateTime();
+            animateBackground();
+            animateCpuLoad();
+
+            const elapsed = (Date.now() - startTime) / 1000;
+            const progress = Math.min(100, (elapsed / 120) * 100);
+            updateProgress(progress);
+            document.getElementById('duration').textContent = `${elapsed.toFixed(1)}s`;
+
+            const mem = 512 + Math.sin(elapsed * 0.5) * 200 + Math.random() * 100;
+            document.getElementById('memory').textContent = `${Math.round(mem)}MB`;
+
+            if (elapsed < 25) {
+                updateStep(1);
+                updateMetricBar('ttsBar', elapsed / 25 * 100);
+                document.getElementById('ttsTime').textContent = `${elapsed.toFixed(1)}s`;
+            } else if (elapsed < 45) {
+                updateStep(2);
+                updateMetricBar('ttsBar', 100);
+                updateMetricBar('bgmBar', (elapsed - 25) / 20 * 100);
+                document.getElementById('bgmTime').textContent = `${(elapsed - 25).toFixed(1)}s`;
+            } else if (elapsed < 60) {
+                updateStep(3);
+                updateMetricBar('bgmBar', 100);
+                updateMetricBar('capBar', (elapsed - 45) / 15 * 100);
+                document.getElementById('capTime').textContent = `${(elapsed - 45).toFixed(1)}s`;
+            } else if (elapsed < 100) {
+                updateStep(4);
+                updateMetricBar('capBar', 100);
+                updateMetricBar('visBar', (elapsed - 60) / 40 * 100);
+                document.getElementById('visTime').textContent = `${(elapsed - 60).toFixed(1)}s`;
+            } else {
+                updateStep(5);
+                updateMetricBar('visBar', 100);
+                updateMetricBar('asmBar', Math.min(100, (elapsed - 100) / 20 * 100));
+                document.getElementById('asmTime').textContent = `${Math.max(0, elapsed - 100).toFixed(1)}s`;
+            }
+
+            if (Math.random() < 0.02) {
+                const messages = [
+                    'Processing audio chunk...',
+                    'Optimizing memory allocation...',
+                    'Rendering frame buffer...',
+                    'Applying sidechain compression...',
+                    'Burning subtitles to video...',
+                ];
+                addLogEntry(messages[Math.floor(Math.random() * messages.length)]);
+            }
+
+            requestAnimationFrame(simulationLoop);
+        }
+
+        createParticles();
+        simulationLoop();
+    </script>
+</body>
+</html>
