@@ -13,6 +13,9 @@ numpy>=1.26.0,<2.0.0
 # Caption generation
 useful-moonshine==20241016
 
+# TTS fallback
+pyttsx3==2.90
+
 # Utilities
 tqdm==4.66.0
 pyyaml==6.0.1
