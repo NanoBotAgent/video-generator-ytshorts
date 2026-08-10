@@ -22,5 +22,4 @@ pyyaml==6.0.1
 requests==2.32.0
 protobuf==5.27.0
 
-# PyTorch CPU installed separately in workflow (keep torchaudio in requirements to prevent uninstall)
-torchaudio==2.4.0+cpu
+# PyTorch CPU (torch, torchvision, torchaudio) installed separately in workflow via --extra-index-url
