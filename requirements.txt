@@ -1,7 +1,7 @@
-# PyTorch CPU-only
-torch==2.4.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
-torchvision==0.19.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
-torchaudio==2.4.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+# PyTorch CPU-only (install via pip with --extra-index-url)
+# torch==2.4.0+cpu
+# torchvision==0.19.0+cpu
+# torchaudio==2.4.0+cpu
 
 # Core ML libraries
 transformers==4.44.0
