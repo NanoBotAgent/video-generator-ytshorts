@@ -83,7 +83,7 @@ jobs:
 
       - name: Install Node dependencies
         run: |
-          npm ci --prefer-offline --no-audit --no-fund
+          npm install --prefer-offline --no-audit --no-fund
           npm list timecut
 
       - name: Install Playwright Chromium
