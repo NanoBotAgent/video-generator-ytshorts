@@ -35,7 +35,7 @@ class BGMGenerator:
         self.device = torch.device("cpu")
         self.model = None
         self.sample_rate = 44100
-        self.model_path = Path.home() / ".cache" / "huggingface" / "hub" / "models--ace-step--ACE-Step-v1-5-4b-xl-turbo"
+        self.model_path = Path.home() / ".cache" / "huggingface" / "hub" / "models--ACE-Step--Ace-Step1.5"
         self.num_inference_steps = 8
         self.guidance_scale = 1.0
 
@@ -48,7 +48,7 @@ class BGMGenerator:
             if not self.model_path.exists():
                 logger.info("Model not found locally, downloading...")
                 snapshot_download(
-                    repo_id="ace-step/ACE-Step-v1-5-4b-xl-turbo",
+                    repo_id="ACE-Step/Ace-Step1.5",
                     local_dir=self.model_path,
                     local_dir_use_symlinks=False,
                     resume_download=True,
