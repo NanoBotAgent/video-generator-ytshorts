@@ -29,16 +29,19 @@ MODELS_TO_DOWNLOAD = {
         "repo_id": "stepfun-ai/Step-Audio-EditX",
         "revision": "main",
         "local_dir": MODEL_CACHE_DIR / "models--stepfun-ai--Step-Audio-EditX",
+        "required": True,
     },
     "bgm": {
         "repo_id": "ace-step/ACE-Step-v1-5-4b-xl-turbo",
         "revision": "main",
         "local_dir": MODEL_CACHE_DIR / "models--ace-step--ACE-Step-v1-5-4b-xl-turbo",
+        "required": False,  # Optional - fallback available
     },
     "captions": {
         "repo_id": "usefulsensors/moonshine-base",
         "revision": "main",
         "local_dir": MODEL_CACHE_DIR / "models--usefulsensors--moonshine-base",
+        "required": True,
     },
 }
 
@@ -112,8 +115,12 @@ def main() -> int:
         return 1
 
     success_count = 0
+    required_failed = False
+    
     for name, config in MODELS_TO_DOWNLOAD.items():
         local_dir = Path(config["local_dir"])
+        is_required = config.get("required", True)
+        
         if verify_model(config["repo_id"], local_dir):
             logger.info(f"Model {name} already cached, skipping download")
             success_count += 1
@@ -124,14 +131,21 @@ def main() -> int:
                 success_count += 1
             else:
                 logger.error(f"Model {name} downloaded but verification failed")
+                if is_required:
+                    required_failed = True
         else:
-            logger.error(f"Model {name} download failed")
+            logger.warning(f"Model {name} download failed (optional: {not is_required})")
+            if is_required:
+                required_failed = True
 
     logger.info("=" * 60)
     logger.info(f"Initialization complete: {success_count}/{len(MODELS_TO_DOWNLOAD)} models ready")
     logger.info("=" * 60)
 
-    return 0 if success_count == len(MODELS_TO_DOWNLOAD) else 1
+    if required_failed:
+        logger.error("Required model(s) failed to download")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
