@@ -1,5 +1,5 @@
 # Core ML libraries
-transformers==4.44.0
+transformers>=4.45.0
 accelerate==0.33.0
 safetensors==0.4.4
 huggingface-hub==0.24.0
