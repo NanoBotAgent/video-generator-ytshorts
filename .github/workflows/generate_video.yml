@@ -1,0 +1,164 @@
+name: Generate Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      script_text:
+        description: 'Voiceover script with paralinguistic tags'
+        required: false
+        type: string
+      bgm_prompt:
+        description: 'Background music prompt'
+        required: false
+        type: string
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 2 * * *'
+
+env:
+  PYTHON_VERSION: '3.10'
+  NODE_VERSION: '20'
+  PIP_CACHE_DIR: ~/.cache/pip
+  HF_HOME: ~/.cache/huggingface
+
+jobs:
+  generate:
+    name: Generate Video
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: package.json
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            libass-dev \
+            libfreetype6-dev \
+            fontconfig \
+            fonts-dejavu-core \
+            fonts-liberation2 \
+            fonts-noto-color-emoji \
+            ca-certificates
+          fc-cache -f -v
+
+      - name: Cache Hugging Face models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            hf-models-${{ runner.os }}-
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install --no-cache-dir -r requirements.txt
+          pip list | grep -E "(torch|transformers|moonshine|librosa|soundfile)"
+
+      - name: Install Node dependencies
+        run: |
+          npm ci --prefer-offline --no-audit --no-fund
+          npm list timecut
+
+      - name: Install Playwright Chromium
+        run: |
+          npx playwright install chromium --with-deps
+          npx playwright install-deps chromium
+
+      - name: Initialize models
+        run: |
+          python scripts/init.py
+
+      - name: Override config from inputs (if provided)
+        if: github.event.inputs.script_text != '' || github.event.inputs.bgm_prompt != ''
+        run: |
+          cat config.json
+          if [ "${{ github.event.inputs.script_text }}" != "" ]; then
+            jq --arg text "${{ github.event.inputs.script_text }}" '.script_text = $text' config.json > config.json.tmp && mv config.json.tmp config.json
+          fi
+          if [ "${{ github.event.inputs.bgm_prompt }}" != "" ]; then
+            jq --arg prompt "${{ github.event.inputs.bgm_prompt }}" '.bgm_prompt = $prompt' config.json > config.json.tmp && mv config.json.tmp config.json
+          fi
+          echo "Updated config:"
+          cat config.json
+
+      - name: Run video generation pipeline
+        run: |
+          python main.py
+        env:
+          KERAS_BACKEND: torch
+          TOKENIZERS_PARALLELISM: false
+          OMP_NUM_THREADS: 4
+          MKL_NUM_THREADS: 4
+
+      - name: Verify output
+        run: |
+          if [ -f output/final_video.mp4 ]; then
+            echo "Final video generated successfully"
+            ls -lh output/final_video.mp4
+            ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate -of csv=p=0 output/final_video.mp4
+            ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate,channels -of csv=p=0 output/final_video.mp4
+          else
+            echo "ERROR: final_video.mp4 not found"
+            ls -la output/
+            exit 1
+          fi
+
+      - name: Upload final video artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-video
+          path: output/final_video.mp4
+          retention-days: 7
+          compression-level: 6
+
+      - name: Upload all outputs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: all-outputs
+          path: output/
+          retention-days: 3
+          compression-level: 6
+
+      - name: Display summary
+        if: always()
+        run: |
+          echo "## Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          if [ -f output/voiceover.wav ]; then echo "| TTS | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| TTS | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          if [ -f output/bgm.wav ]; then echo "| BGM | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| BGM | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          if [ -f output/captions.ass ]; then echo "| Captions | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| Captions | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          if [ -f output/visuals.mp4 ]; then echo "| Visuals | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| Visuals | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          if [ -f output/final_video.mp4 ]; then echo "| Assembly | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| Assembly | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f output/final_video.mp4 ]; then
+            SIZE=$(du -h output/final_video.mp4 | cut -f1)
+            echo "**Final Video:** ${SIZE}" >> $GITHUB_STEP_SUMMARY
+          fi
