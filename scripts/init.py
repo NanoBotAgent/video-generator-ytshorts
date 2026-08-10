@@ -32,9 +32,9 @@ MODELS_TO_DOWNLOAD = {
         "required": True,
     },
     "bgm": {
-        "repo_id": "ace-step/ACE-Step-v1-5-4b-xl-turbo",
+        "repo_id": "ACE-Step/Ace-Step1.5",
         "revision": "main",
-        "local_dir": MODEL_CACHE_DIR / "models--ace-step--ACE-Step-v1-5-4b-xl-turbo",
+        "local_dir": MODEL_CACHE_DIR / "models--ACE-Step--Ace-Step1.5",
         "required": False,  # Optional - fallback available
     },
     "captions": {
