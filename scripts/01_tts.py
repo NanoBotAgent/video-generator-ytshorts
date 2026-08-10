@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-TTS Module - Step Audio EditX (3B Q8 quantized) with fallback to pyttsx3.
+TTS Module - Step Audio EditX (3B Q8 quantized) for voiceover generation.
 Generates voiceover.wav with zero-shot voice cloning and paralinguistic tag support.
+Falls back to pyttsx3 if CUDA libraries are missing.
 """
 
 import os
@@ -11,7 +12,7 @@ import logging
 import time
 import wave
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torchaudio
@@ -70,7 +71,7 @@ class TTSGenerator:
             logger.info(f"Model loaded in {time.time() - start_time:.1f}s")
             return True
         except Exception as e:
-            logger.warning(f"Failed to load Step Audio EditX model: {e}")
+            logger.error(f"Failed to load TTS model: {e}")
             return False
 
     def process_paralinguistic_tags(self, text: str) -> str:
@@ -87,43 +88,13 @@ class TTSGenerator:
             processed = processed.replace(tag, token)
         return processed
 
-    def generate_fallback(self, text: str) -> Optional[Path]:
-        """Generate voiceover using pyttsx3 as fallback."""
-        try:
-            logger.info("Using pyttsx3 fallback TTS...")
-            start_time = time.time()
-
-            import pyttsx3
-            engine = pyttsx3.init()
-            engine.setProperty('rate', 180)
-            engine.setProperty('volume', 1.0)
-
-            output_path = self.output_dir / "voiceover.wav"
-            engine.save_to_file(text, str(output_path))
-            engine.runAndWait()
-
-            # Convert to desired sample rate if needed
-            import soundfile as sf
-            audio, sr = sf.read(str(output_path))
-            if sr != self.sample_rate:
-                import librosa
-                audio = librosa.resample(audio, orig_sr=sr, target_sr=self.sample_rate)
-                sf.write(str(output_path), audio, self.sample_rate, subtype='PCM_16')
-
-            duration = len(audio) / self.sample_rate
-            logger.info(f"Fallback TTS generated in {time.time() - start_time:.1f}s ({duration:.2f}s)")
-            return output_path
-        except Exception as e:
-            logger.error(f"Fallback TTS failed: {e}")
-            return None
-
     def generate(self, text: str) -> Optional[Path]:
-        """Generate voiceover audio from text with fallback."""
+        """Generate voiceover audio from text with fallback to pyttsx3."""
         # Try main model first
         if self.model is None or self.tokenizer is None:
             if not self.load_model():
-                logger.info("Main model failed to load, trying fallback...")
-                return self.generate_fallback(text)
+                logger.info("Main model failed to load, using pyttsx3 fallback")
+                return self._generate_fallback(text)
 
         try:
             logger.info("Generating voiceover with Step Audio EditX...")
@@ -180,9 +151,45 @@ class TTSGenerator:
                        f"({duration:.2f}s, {target_sr}Hz, mono)")
             return output_path
 
+        except OSError as e:
+            if "libcudart" in str(e) or "cuda" in str(e).lower():
+                logger.warning(f"CUDA library error in torchaudio: {e}. Falling back to pyttsx3...")
+                return self._generate_fallback(text)
+            logger.error(f"TTS generation failed with OSError: {e}")
+            return self._generate_fallback(text)
         except Exception as e:
-            logger.warning(f"Main TTS generation failed: {e}, trying fallback...")
-            return self.generate_fallback(text)
+            logger.error(f"TTS generation failed: {e}")
+            return self._generate_fallback(text)
+
+    def _generate_fallback(self, text: str) -> Optional[Path]:
+        """Generate voiceover using pyttsx3 as fallback."""
+        try:
+            logger.info("Generating voiceover with pyttsx3 fallback...")
+            start_time = time.time()
+
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.setProperty('rate', 180)
+            engine.setProperty('volume', 1.0)
+
+            output_path = self.output_dir / "voiceover.wav"
+            engine.save_to_file(text, str(output_path))
+            engine.runAndWait()
+
+            # Convert to desired sample rate if needed
+            import soundfile as sf
+            audio, sr = sf.read(str(output_path))
+            if sr != self.sample_rate:
+                import librosa
+                audio = librosa.resample(audio, orig_sr=sr, target_sr=self.sample_rate)
+                sf.write(str(output_path), audio, self.sample_rate, subtype='PCM_16')
+
+            duration = len(audio) / self.sample_rate
+            logger.info(f"Fallback TTS generated in {time.time() - start_time:.1f}s ({duration:.2f}s)")
+            return output_path
+        except Exception as e:
+            logger.error(f"Fallback TTS failed: {e}")
+            return None
 
 
 def get_audio_duration(wav_path: Path) -> float:
