@@ -2,7 +2,7 @@
 """
 TTS Module - Step Audio EditX (3B) for voiceover generation.
 Generates voiceover.wav with zero-shot voice cloning and paralinguistic tag support.
-Uses the model's own model_loader.py for proper loading.
+Creates proper package structure to handle relative imports.
 """
 
 import os
@@ -11,6 +11,8 @@ import json
 import logging
 import time
 import wave
+import tempfile
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -38,9 +40,55 @@ class TTSGenerator:
         self.tokenizer = None
         self.sample_rate = config.get("voiceover_sample_rate", 44100)
         self.model_path = Path.home() / ".cache" / "huggingface" / "hub" / "models--stepfun-ai--Step-Audio-EditX"
+        self._temp_package_dir = None
+
+    def _create_package_structure(self) -> Path:
+        """Create a temporary package structure to handle relative imports."""
+        # Create a temporary directory for our package
+        temp_dir = Path(tempfile.mkdtemp(prefix="step_audio_editx_"))
+        self._temp_package_dir = temp_dir
+        
+        # Create the package structure: step_audio_editx/
+        pkg_dir = temp_dir / "step_audio_editx"
+        pkg_dir.mkdir(parents=True)
+        
+        # Create __init__.py
+        (pkg_dir / "__init__.py").write_text("")
+        
+        # Copy modeling files to the package
+        model_files = {
+            "modeling_step1.py": self.model_path / "modeling_step1.py",
+            "configuration_step1.py": self.model_path / "configuration_step1.py",
+        }
+        
+        for name, src in model_files.items():
+            if src.exists():
+                dst = pkg_dir / name
+                shutil.copy2(src, dst)
+                logger.info(f"Copied {name} to package")
+            else:
+                logger.warning(f"File not found: {src}")
+        
+        # Fix relative imports in modeling_step1.py
+        modeling_path = pkg_dir / "modeling_step1.py"
+        if modeling_path.exists():
+            content = modeling_path.read_text()
+            # Replace relative imports with absolute imports
+            content = content.replace(
+                "from .configuration_step1 import Step1Config",
+                "from step_audio_editx.configuration_step1 import Step1Config"
+            )
+            content = content.replace(
+                "from .configuration_step1 import Step1Config",
+                "from step_audio_editx.configuration_step1 import Step1Config"
+            )
+            modeling_path.write_text(content)
+            logger.info("Fixed relative imports in modeling_step1.py")
+        
+        return temp_dir
 
     def load_model(self) -> bool:
-        """Load Step Audio EditX model using model's own loader."""
+        """Load Step Audio EditX model by creating proper package structure."""
         try:
             logger.info("Loading Step Audio EditX model (this may take several minutes on CPU)...")
             start_time = time.time()
@@ -69,75 +117,42 @@ class TTSGenerator:
             logger.info(f"Config class: {config.__class__.__name__}")
             logger.info(f"Config model_type: {getattr(config, 'model_type', 'unknown')}")
 
-            # Use the model's own model_loader.py to load the model
-            # Add model path to sys.path
-            sys.path.insert(0, str(self.model_path))
+            # Create package structure to handle relative imports
+            pkg_dir = self._create_package_structure()
             
-            # Import and use the model's own model_loader
+            # Add package directory to sys.path
+            sys.path.insert(0, str(pkg_dir))
+            
+            # Import the model class
             try:
-                import importlib.util
-                model_loader_path = self.model_path / "model_loader.py"
-                if model_loader_path.exists():
-                    spec = importlib.util.spec_from_file_location("model_loader", model_loader_path)
-                    if spec and spec.loader:
-                        model_loader_module = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(model_loader_module)
-                        
-                        # The model_loader.py should have a function to load the model
-                        # Common function names: load_model, get_model, create_model
-                        load_func = None
-                        for func_name in ["load_model", "get_model", "create_model", "load_step_audio_editx"]:
-                            load_func = getattr(model_loader_module, func_name, None)
-                            if load_func:
-                                logger.info(f"Found load function: {func_name}")
-                                break
-                        
-                        if load_func:
-                            # Call the load function
-                            self.model = load_func(
-                                model_path=str(self.model_path),
-                                device=self.device,
-                                dtype=torch.float32,
-                            )
-                            logger.info("Model loaded via model_loader.py")
-                        else:
-                            raise AttributeError("No load function found in model_loader.py")
-                else:
-                    raise FileNotFoundError("model_loader.py not found")
-            except Exception as e:
-                logger.warning(f"Could not use model_loader.py: {e}")
-                # Fallback: try to import from src/step_audio.py
-                try:
-                    src_step_audio = self.model_path / "src" / "step_audio.py"
-                    if src_step_audio.exists():
-                        spec = importlib.util.spec_from_file_location("step_audio", src_step_audio)
-                        if spec and spec.loader:
-                            step_audio_module = importlib.util.module_from_spec(spec)
-                            spec.loader.exec_module(step_audio_module)
-                            
-                            # Look for model class
-                            for attr_name in ["Step1ForCausalLM", "StepAudioEditXForCausalLM", "StepAudioForCausalLM", "StepAudioEditX"]:
-                                model_class = getattr(step_audio_module, attr_name, None)
-                                if model_class:
-                                    logger.info(f"Found model class: {attr_name} in src/step_audio.py")
-                                    break
-                            
-                            if model_class:
-                                self.model = model_class.from_pretrained(
-                                    self.model_path,
-                                    trust_remote_code=True,
-                                    torch_dtype=torch.float32,
-                                    low_cpu_mem_usage=True,
-                                    config=config,
-                                ).to(self.device)
-                            else:
-                                raise AttributeError("No model class found in src/step_audio.py")
-                except Exception as e:
-                    logger.warning(f"Could not import from src/step_audio.py: {e}")
+                import importlib
+                modeling_module = importlib.import_module("step_audio_editx.modeling_step1")
+                
+                # Find the model class
+                model_class = None
+                for attr_name in ["Step1ForCausalLM", "StepAudioEditXForCausalLM", "StepAudioForCausalLM"]:
+                    model_class = getattr(modeling_module, attr_name, None)
+                    if model_class:
+                        logger.info(f"Found model class: {attr_name}")
+                        break
+                
+                if model_class is None:
+                    logger.error("Could not find model class in modeling_step1")
                     return False
-
-            if self.model is None:
-                logger.error("Could not load model with any method")
+                
+                # Load model with the custom class
+                self.model = model_class.from_pretrained(
+                    self.model_path,
+                    trust_remote_code=True,
+                    torch_dtype=torch.float32,  # Use float32 for CPU
+                    low_cpu_mem_usage=True,
+                    config=config,
+                ).to(self.device)
+                
+            except Exception as e:
+                logger.error(f"Failed to import model class: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 return False
 
             self.model.eval()
@@ -148,6 +163,13 @@ class TTSGenerator:
             import traceback
             logger.error(traceback.format_exc())
             return False
+        finally:
+            # Clean up temp directory
+            if self._temp_package_dir and self._temp_package_dir.exists():
+                try:
+                    shutil.rmtree(self._temp_package_dir)
+                except Exception:
+                    pass
 
     def process_paralinguistic_tags(self, text: str) -> str:
         """Process paralinguistic tags for Step Audio EditX."""
