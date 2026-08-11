@@ -99,6 +99,7 @@ class VisualsRenderer:
                 "--top=0",
                 "--round=1",
                 "--parallel=1",
+                "--no-sandbox",  # Required for GitHub Actions / CI environments
             ]
 
             logger.info(f"Executing: {' '.join(cmd)}")
