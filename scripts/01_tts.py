@@ -2,6 +2,7 @@
 """
 TTS Module - Step Audio EditX (3B) for voiceover generation.
 Generates voiceover.wav with zero-shot voice cloning and paralinguistic tag support.
+Uses the model's own model_loader.py for proper loading.
 """
 
 import os
@@ -39,7 +40,7 @@ class TTSGenerator:
         self.model_path = Path.home() / ".cache" / "huggingface" / "hub" / "models--stepfun-ai--Step-Audio-EditX"
 
     def load_model(self) -> bool:
-        """Load Step Audio EditX model by registering custom modeling code first."""
+        """Load Step Audio EditX model using model's own loader."""
         try:
             logger.info("Loading Step Audio EditX model (this may take several minutes on CPU)...")
             start_time = time.time()
@@ -68,71 +69,76 @@ class TTSGenerator:
             logger.info(f"Config class: {config.__class__.__name__}")
             logger.info(f"Config model_type: {getattr(config, 'model_type', 'unknown')}")
 
-            # Register custom modeling code by importing from model's src directory
-            # The model has custom modeling code in src/step_audio.py or modeling_step1.py
-            model_class = None
+            # Use the model's own model_loader.py to load the model
+            # Add model path to sys.path
+            sys.path.insert(0, str(self.model_path))
+            
+            # Import and use the model's own model_loader
             try:
-                # Add model path to sys.path to import custom modules
-                sys.path.insert(0, str(self.model_path))
-                # The model uses a custom modeling file - try to import it
                 import importlib.util
-                
-                # Try common locations for the modeling file
-                modeling_paths = [
-                    self.model_path / "src" / "step_audio.py",
-                    self.model_path / "modeling_step1.py",
-                    self.model_path / "step_audio.py",
-                ]
-                
-                for modeling_path in modeling_paths:
-                    if modeling_path.exists():
-                        spec = importlib.util.spec_from_file_location("modeling_custom", modeling_path)
-                        if spec and spec.loader:
-                            module = importlib.util.module_from_spec(spec)
-                            spec.loader.exec_module(module)
-                            # Try to find the model class
-                            for attr_name in ["Step1ForCausalLM", "StepAudioEditXForCausalLM", "StepAudioForCausalLM"]:
-                                model_class = getattr(module, attr_name, None)
-                                if model_class:
-                                    logger.info(f"Found model class: {attr_name} from {modeling_path}")
-                                    break
-                            if model_class:
+                model_loader_path = self.model_path / "model_loader.py"
+                if model_loader_path.exists():
+                    spec = importlib.util.spec_from_file_location("model_loader", model_loader_path)
+                    if spec and spec.loader:
+                        model_loader_module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(model_loader_module)
+                        
+                        # The model_loader.py should have a function to load the model
+                        # Common function names: load_model, get_model, create_model
+                        load_func = None
+                        for func_name in ["load_model", "get_model", "create_model", "load_step_audio_editx"]:
+                            load_func = getattr(model_loader_module, func_name, None)
+                            if load_func:
+                                logger.info(f"Found load function: {func_name}")
                                 break
+                        
+                        if load_func:
+                            # Call the load function
+                            self.model = load_func(
+                                model_path=str(self.model_path),
+                                device=self.device,
+                                dtype=torch.float32,
+                            )
+                            logger.info("Model loaded via model_loader.py")
+                        else:
+                            raise AttributeError("No load function found in model_loader.py")
+                else:
+                    raise FileNotFoundError("model_loader.py not found")
             except Exception as e:
-                logger.warning(f"Could not import custom modeling code: {e}")
-
-            if model_class is None:
-                # Try to use transformers' AutoModelForCausalLM with trust_remote_code
-                # but we need to register the model class first
-                # Try to get it from the model's __init__.py
+                logger.warning(f"Could not use model_loader.py: {e}")
+                # Fallback: try to import from src/step_audio.py
                 try:
-                    init_path = self.model_path / "__init__.py"
-                    if init_path.exists():
-                        spec = importlib.util.spec_from_file_location("model_init", init_path)
+                    src_step_audio = self.model_path / "src" / "step_audio.py"
+                    if src_step_audio.exists():
+                        spec = importlib.util.spec_from_file_location("step_audio", src_step_audio)
                         if spec and spec.loader:
-                            module = importlib.util.module_from_spec(spec)
-                            spec.loader.exec_module(module)
-                            # Check for model class exports
-                            for attr_name in ["Step1ForCausalLM", "StepAudioEditXForCausalLM", "StepAudioForCausalLM"]:
-                                model_class = getattr(module, attr_name, None)
+                            step_audio_module = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(step_audio_module)
+                            
+                            # Look for model class
+                            for attr_name in ["Step1ForCausalLM", "StepAudioEditXForCausalLM", "StepAudioForCausalLM", "StepAudioEditX"]:
+                                model_class = getattr(step_audio_module, attr_name, None)
                                 if model_class:
-                                    logger.info(f"Found model class in __init__.py: {attr_name}")
+                                    logger.info(f"Found model class: {attr_name} in src/step_audio.py")
                                     break
+                            
+                            if model_class:
+                                self.model = model_class.from_pretrained(
+                                    self.model_path,
+                                    trust_remote_code=True,
+                                    torch_dtype=torch.float32,
+                                    low_cpu_mem_usage=True,
+                                    config=config,
+                                ).to(self.device)
+                            else:
+                                raise AttributeError("No model class found in src/step_audio.py")
                 except Exception as e:
-                    logger.warning(f"Could not import from __init__.py: {e}")
+                    logger.warning(f"Could not import from src/step_audio.py: {e}")
+                    return False
 
-            if model_class is None:
-                logger.error("Could not find Step Audio EditX model class")
+            if self.model is None:
+                logger.error("Could not load model with any method")
                 return False
-
-            # Load model with the custom class
-            self.model = model_class.from_pretrained(
-                self.model_path,
-                trust_remote_code=True,
-                torch_dtype=torch.float32,  # Use float32 for CPU
-                low_cpu_mem_usage=True,
-                config=config,
-            ).to(self.device)
 
             self.model.eval()
             logger.info(f"Model loaded in {time.time() - start_time:.1f}s")
