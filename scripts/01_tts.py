@@ -15,7 +15,7 @@ from typing import Optional
 
 import torch
 import numpy as np
-from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoConfig
 from huggingface_hub import snapshot_download
 
 logging.basicConfig(
@@ -39,7 +39,7 @@ class TTSGenerator:
         self.model_path = Path.home() / ".cache" / "huggingface" / "hub" / "models--stepfun-ai--Step-Audio-EditX"
 
     def load_model(self) -> bool:
-        """Load Step Audio EditX model."""
+        """Load Step Audio EditX model by registering custom modeling code first."""
         try:
             logger.info("Loading Step Audio EditX model (this may take several minutes on CPU)...")
             start_time = time.time()
@@ -60,15 +60,73 @@ class TTSGenerator:
                 use_fast=False,
             )
 
-            # Load config
+            # Load config first
             config = AutoConfig.from_pretrained(
                 self.model_path,
                 trust_remote_code=True,
             )
             logger.info(f"Config class: {config.__class__.__name__}")
+            logger.info(f"Config model_type: {getattr(config, 'model_type', 'unknown')}")
 
-            # Load model with trust_remote_code
-            self.model = AutoModelForCausalLM.from_pretrained(
+            # Register custom modeling code by importing from model's src directory
+            # The model has custom modeling code in src/step_audio.py or modeling_step1.py
+            model_class = None
+            try:
+                # Add model path to sys.path to import custom modules
+                sys.path.insert(0, str(self.model_path))
+                # The model uses a custom modeling file - try to import it
+                import importlib.util
+                
+                # Try common locations for the modeling file
+                modeling_paths = [
+                    self.model_path / "src" / "step_audio.py",
+                    self.model_path / "modeling_step1.py",
+                    self.model_path / "step_audio.py",
+                ]
+                
+                for modeling_path in modeling_paths:
+                    if modeling_path.exists():
+                        spec = importlib.util.spec_from_file_location("modeling_custom", modeling_path)
+                        if spec and spec.loader:
+                            module = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(module)
+                            # Try to find the model class
+                            for attr_name in ["Step1ForCausalLM", "StepAudioEditXForCausalLM", "StepAudioForCausalLM"]:
+                                model_class = getattr(module, attr_name, None)
+                                if model_class:
+                                    logger.info(f"Found model class: {attr_name} from {modeling_path}")
+                                    break
+                            if model_class:
+                                break
+            except Exception as e:
+                logger.warning(f"Could not import custom modeling code: {e}")
+
+            if model_class is None:
+                # Try to use transformers' AutoModelForCausalLM with trust_remote_code
+                # but we need to register the model class first
+                # Try to get it from the model's __init__.py
+                try:
+                    init_path = self.model_path / "__init__.py"
+                    if init_path.exists():
+                        spec = importlib.util.spec_from_file_location("model_init", init_path)
+                        if spec and spec.loader:
+                            module = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(module)
+                            # Check for model class exports
+                            for attr_name in ["Step1ForCausalLM", "StepAudioEditXForCausalLM", "StepAudioForCausalLM"]:
+                                model_class = getattr(module, attr_name, None)
+                                if model_class:
+                                    logger.info(f"Found model class in __init__.py: {attr_name}")
+                                    break
+                except Exception as e:
+                    logger.warning(f"Could not import from __init__.py: {e}")
+
+            if model_class is None:
+                logger.error("Could not find Step Audio EditX model class")
+                return False
+
+            # Load model with the custom class
+            self.model = model_class.from_pretrained(
                 self.model_path,
                 trust_remote_code=True,
                 torch_dtype=torch.float32,  # Use float32 for CPU
