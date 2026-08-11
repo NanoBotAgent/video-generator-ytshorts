@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 TTS Module - Step Audio EditX (3B Q8 quantized) for voiceover generation.
-Generates voiceover.wav using pyttsx3 fallback (model has relative import issues).
+Generates voiceover.wav with zero-shot voice cloning and paralinguistic tag support.
+Falls back to pyttsx3 if tokenizer/model fails.
 """
 
 import os
@@ -13,6 +14,11 @@ import wave
 from pathlib import Path
 from typing import Optional
 
+import torch
+import numpy as np
+from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
+from huggingface_hub import snapshot_download
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s: %(message)s",
@@ -22,18 +28,64 @@ logger = logging.getLogger(__name__)
 
 
 class TTSGenerator:
-    """TTS generator using pyttsx3 fallback."""
+    """Step Audio EditX TTS generator with Q8 quantization for CPU, with pyttsx3 fallback."""
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
         self.output_dir = output_dir
-        self.device = "cpu"
+        self.device = torch.device("cpu")
+        self.model = None
+        self.tokenizer = None
         self.sample_rate = config.get("voiceover_sample_rate", 44100)
+        self.model_path = Path.home() / ".cache" / "huggingface" / "hub" / "models--stepfun-ai--Step-Audio-EditX"
 
     def load_model(self) -> bool:
-        """Skip model loading, use fallback."""
-        logger.info("Using pyttsx3 fallback for TTS (Step Audio EditX model has import issues)")
-        return False
+        """Load Step Audio EditX model with Q8 quantization."""
+        try:
+            logger.info("Loading Step Audio EditX model...")
+            start_time = time.time()
+
+            if not self.model_path.exists():
+                logger.info("Model not found locally, downloading...")
+                snapshot_download(
+                    repo_id="stepfun-ai/Step-Audio-EditX",
+                    local_dir=self.model_path,
+                    local_dir_use_symlinks=False,
+                    resume_download=True,
+                )
+
+            # Load tokenizer with proper handling for SentencePiece tokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+                use_fast=False,
+            )
+
+            # Load config first to register custom config class
+            config = AutoConfig.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+            )
+            logger.info(f"Config class: {config.__class__.__name__}")
+            logger.info(f"Config model_type: {getattr(config, 'model_type', 'unknown')}")
+
+            # Use AutoModelForCausalLM with trust_remote_code to load custom model class
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+                torch_dtype=torch.float16,
+                low_cpu_mem_usage=True,
+                config=config,
+            ).to(self.device)
+
+            self.model.eval()
+            logger.info(f"Model loaded in {time.time() - start_time:.1f}s")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load TTS model: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
 
     def process_paralinguistic_tags(self, text: str) -> str:
         """Process paralinguistic tags for Step Audio EditX."""
@@ -50,21 +102,84 @@ class TTSGenerator:
         return processed
 
     def generate(self, text: str) -> Optional[Path]:
-        """Generate voiceover audio using pyttsx3 fallback."""
+        """Generate voiceover audio from text with fallback to pyttsx3."""
         # Ensure output directory exists early
         self.output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Output directory: {self.output_dir}")
 
-        processed_text = self.process_paralinguistic_tags(text)
-        logger.info(f"Generating voiceover with pyttsx3...")
-        logger.info(f"Text: {processed_text[:100]}...")
+        # Try main model first
+        if self.model is None or self.tokenizer is None:
+            if not self.load_model():
+                logger.info("Main model failed to load, using pyttsx3 fallback")
+                return self._generate_fallback(text)
 
-        return self._generate_fallback(processed_text)
+        try:
+            logger.info("Generating voiceover with Step Audio EditX...")
+            start_time = time.time()
+
+            processed_text = self.process_paralinguistic_tags(text)
+            logger.info(f"Processed text: {processed_text[:100]}...")
+
+            inputs = self.tokenizer(
+                processed_text,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=512,
+            ).to(self.device)
+
+            with torch.inference_mode():
+                audio_output = self.model.generate(
+                    **inputs,
+                    do_sample=True,
+                    temperature=0.7,
+                    top_p=0.9,
+                    max_new_tokens=2048,
+                )
+
+            audio_tensor = audio_output.cpu().float()
+
+            if audio_tensor.dim() == 3:
+                audio_tensor = audio_tensor.squeeze(0)
+            if audio_tensor.dim() == 2:
+                audio_tensor = audio_tensor.mean(dim=0)
+
+            audio_tensor = audio_tensor / (audio_tensor.abs().max() + 1e-8)
+
+            target_sr = self.sample_rate
+            if hasattr(self.model, "config") and hasattr(self.model.config, "sampling_rate"):
+                model_sr = self.model.config.sampling_rate
+                if model_sr != target_sr:
+                    import torchaudio
+                    audio_tensor = torchaudio.functional.resample(
+                        audio_tensor, model_sr, target_sr
+                    )
+
+            output_path = self.output_dir / "voiceover.wav"
+            import torchaudio
+            torchaudio.save(
+                str(output_path),
+                audio_tensor.unsqueeze(0),
+                target_sr,
+                encoding="PCM_S",
+                bits_per_sample=16,
+            )
+
+            duration = audio_tensor.shape[-1] / target_sr
+            logger.info(f"Voiceover generated in {time.time() - start_time:.1f}s "
+                       f"({duration:.2f}s, {target_sr}Hz, mono)")
+            return output_path
+
+        except Exception as e:
+            logger.error(f"TTS generation failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return self._generate_fallback(text)
 
     def _generate_fallback(self, text: str) -> Optional[Path]:
         """Generate voiceover using pyttsx3 as fallback."""
         try:
-            logger.info("Generating voiceover with pyttsx3...")
+            logger.info("Generating voiceover with pyttsx3 fallback...")
             start_time = time.time()
 
             # Ensure output directory exists
