@@ -16,7 +16,7 @@ from typing import Optional, Tuple
 
 import torch
 import numpy as np
-from transformers import AutoModel, AutoTokenizer, AutoConfig
+from transformers import AutoTokenizer, AutoConfig
 from huggingface_hub import snapshot_download
 
 logging.basicConfig(
@@ -50,9 +50,14 @@ class TTSGenerator:
                 snapshot_download(
                     repo_id="stepfun-ai/Step-Audio-EditX",
                     local_dir=self.model_path,
-                    local_dir_use_symlinks=False,
+                    local_local_dir_use_symlinks=False,
                     resume_download=True,
                 )
+
+            # Add model path to sys.path to import custom model class
+            transformers_modules_path = self.model_path / "transformers_modules"
+            if transformers_modules_path.exists():
+                sys.path.insert(0, str(transformers_modules_path))
 
             # Load tokenizer with proper handling for SentencePiece tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(
@@ -61,20 +66,38 @@ class TTSGenerator:
                 use_fast=False,  # Disable fast tokenizer to avoid tiktoken issues
             )
 
-            # Load config first to register custom config class
+            # Load config to get model class name
             config = AutoConfig.from_pretrained(
                 self.model_path,
                 trust_remote_code=True,
             )
 
-            # Load model using the registered custom class (AutoModel will use the custom class)
-            self.model = AutoModel.from_pretrained(
-                self.model_path,
-                trust_remote_code=True,
-                torch_dtype=torch.float16,
-                low_cpu_mem_usage=True,
-                config=config,
-            ).to(self.device)
+            # Import and load the custom model class directly
+            try:
+                # The model uses a custom modeling file - import it
+                from models.step1.modeling_step1 import Step1ForCausalLM
+                self.model = Step1ForCausalLM.from_pretrained(
+                    self.model_path,
+                    trust_remote_code=True,
+                    torch_dtype=torch.float16,
+                    low_cpu_mem_usage=True,
+                    config=config,
+                ).to(self.device)
+            except ImportError as e:
+                logger.warning(f"Could not import custom model class: {e}")
+                # Try alternative import path
+                try:
+                    from modeling_step1 import Step1ForCausalLM
+                    self.model = Step1ForCausalLM.from_pretrained(
+                        self.model_path,
+                        trust_remote_code=True,
+                        torch_dtype=torch.float16,
+                        low_cpu_mem_usage=True,
+                        config=config,
+                    ).to(self.device)
+                except ImportError as e2:
+                    logger.error(f"Failed to import custom model class: {e2}")
+                    return False
 
             self.model.eval()
             logger.info(f"Model loaded in {time.time() - start_time:.1f}s")
