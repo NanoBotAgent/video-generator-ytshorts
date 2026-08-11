@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Visuals Module - Generates MP4 video using ffmpeg (fallback for CI).
+Visuals Module - Generates MP4 video using ffmpeg (reliable in CI).
 Generates 1080x1920 @ 60fps visuals.mp4 matching voiceover duration.
 """
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class VisualsRenderer:
-    """Generates video using ffmpeg (reliable in CI)."""
+    """Generates video using ffmpeg with animated gradients (reliable in CI)."""
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
