@@ -63,8 +63,8 @@ jobs:
             fonts-liberation2 \
             fonts-noto-color-emoji \
             ca-certificates \
-            espeak-ng \
-            libespeak-ng1
+            espeak \
+            libespeak1
           fc-cache -f -v
 
       - name: Cache Hugging Face models
