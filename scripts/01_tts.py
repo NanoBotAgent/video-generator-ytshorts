@@ -50,20 +50,22 @@ class TTSGenerator:
                 snapshot_download(
                     repo_id="stepfun-ai/Step-Audio-EditX",
                     local_dir=self.model_path,
-                    local_local_dir_use_symlinks=False,
+                    local_dir_use_symlinks=False,
                     resume_download=True,
                 )
 
-            # Add model path to sys.path to import custom model class
+            # Debug: List the model directory structure
+            logger.info(f"Model path contents: {list(self.model_path.iterdir())}")
             transformers_modules_path = self.model_path / "transformers_modules"
             if transformers_modules_path.exists():
+                logger.info(f"transformers_modules contents: {list(transformers_modules_path.rglob('*'))}")
                 sys.path.insert(0, str(transformers_modules_path))
 
             # Load tokenizer with proper handling for SentencePiece tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_path,
                 trust_remote_code=True,
-                use_fast=False,  # Disable fast tokenizer to avoid tiktoken issues
+                use_fast=False,
             )
 
             # Load config to get model class name
@@ -71,39 +73,61 @@ class TTSGenerator:
                 self.model_path,
                 trust_remote_code=True,
             )
+            logger.info(f"Config class: {config.__class__.__name__}")
+            logger.info(f"Config model_type: {getattr(config, 'model_type', 'unknown')}")
 
             # Import and load the custom model class directly
+            model_class = None
             try:
-                # The model uses a custom modeling file - import it
-                from models.step1.modeling_step1 import Step1ForCausalLM
-                self.model = Step1ForCausalLM.from_pretrained(
-                    self.model_path,
-                    trust_remote_code=True,
-                    torch_dtype=torch.float16,
-                    low_cpu_mem_usage=True,
-                    config=config,
-                ).to(self.device)
-            except ImportError as e:
-                logger.warning(f"Could not import custom model class: {e}")
-                # Try alternative import path
-                try:
-                    from modeling_step1 import Step1ForCausalLM
-                    self.model = Step1ForCausalLM.from_pretrained(
-                        self.model_path,
-                        trust_remote_code=True,
-                        torch_dtype=torch.float16,
-                        low_cpu_mem_usage=True,
-                        config=config,
-                    ).to(self.device)
-                except ImportError as e2:
-                    logger.error(f"Failed to import custom model class: {e2}")
-                    return False
+                # Try to get the model class from transformers_modules
+                import importlib.util
+                spec = importlib.util.spec_from_file_location(
+                    "modeling_step1", 
+                    transformers_modules_path / "models" / "step1" / "modeling_step1.py"
+                )
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    model_class = getattr(module, "Step1ForCausalLM", None)
+                    logger.info(f"Found model class via importlib: {model_class}")
+            except Exception as e:
+                logger.warning(f"Importlib approach failed: {e}")
+
+            if model_class is None:
+                # Try direct import from various paths
+                for import_path in [
+                    "models.step1.modeling_step1",
+                    "modeling_step1",
+                    "step1.modeling_step1",
+                ]:
+                    try:
+                        module = __import__(import_path, fromlist=["Step1ForCausalLM"])
+                        model_class = getattr(module, "Step1ForCausalLM", None)
+                        if model_class:
+                            logger.info(f"Found model class via {import_path}: {model_class}")
+                            break
+                    except ImportError as e:
+                        logger.debug(f"Import {import_path} failed: {e}")
+
+            if model_class is None:
+                logger.error("Could not find Step1ForCausalLM model class")
+                return False
+
+            self.model = model_class.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+                torch_dtype=torch.float16,
+                low_cpu_mem_usage=True,
+                config=config,
+            ).to(self.device)
 
             self.model.eval()
             logger.info(f"Model loaded in {time.time() - start_time:.1f}s")
             return True
         except Exception as e:
             logger.error(f"Failed to load TTS model: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
 
     def process_paralinguistic_tags(self, text: str) -> str:
@@ -124,6 +148,7 @@ class TTSGenerator:
         """Generate voiceover audio from text with fallback to pyttsx3."""
         # Ensure output directory exists early
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Output directory: {self.output_dir}")
 
         # Try main model first
         if self.model is None or self.tokenizer is None:
@@ -190,6 +215,8 @@ class TTSGenerator:
 
         except Exception as e:
             logger.error(f"TTS generation failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return self._generate_fallback(text)
 
     def _generate_fallback(self, text: str) -> Optional[Path]:
@@ -223,6 +250,8 @@ class TTSGenerator:
             return output_path
         except Exception as e:
             logger.error(f"Fallback TTS failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
 
 
