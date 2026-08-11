@@ -72,14 +72,23 @@ class VideoAssembler:
         """Build FFmpeg filter graph with sidechain ducking and subtitle burning."""
         duck = self.bgm_duck_level
 
+        # Use proper filter graph with numbered pad names
+        # Input 0: visuals (video only)
+        # Input 1: voiceover (audio only)  
+        # Input 2: bgm (audio only)
         filter_parts = [
-            f"[1:a]volume=1.0,volume=1.0[voice]",
-            f"[2:a]volume=1.0[bgm]",
-            f"[bgm][voice]sidechaincompress="
-            f"threshold=0.003:ratio=20:attack=5:release=100:makeup=1[ducked]",
+            # Process voiceover (input 1) - normalize volume
+            "[1:a]volume=1.0,volume=1.0[voice]",
+            # Process bgm (input 2) - normalize volume  
+            "[2:a]volume=1.0[bgm]",
+            # Sidechain: duck bgm when voice is present
+            "[bgm][voice]sidechaincompress=threshold=0.003:ratio=20:attack=5:release=100:makeup=1[ducked]",
+            # Apply duck level
             f"[ducked]volume={duck}[bgm_final]",
-            f"[voice][bgm_final]amix=inputs=2:duration=first:dropout_transition=0[audio_out]",
-            f"[0:v]ass={self.output_dir / 'captions.ass'}[vout]",
+            # Mix voice and ducked bgm
+            "[voice][bgm_final]amix=inputs=2:duration=first:dropout_transition=0[audio_out]",
+            # Burn subtitles (captions.ass) onto video (input 0)
+            f"[0:v]ass='{self.output_dir / 'captions.ass'}'[vout]",
         ]
 
         return ";".join(filter_parts)
