@@ -16,7 +16,7 @@ from typing import Optional, Tuple
 
 import torch
 import numpy as np
-from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoModel, AutoTokenizer, AutoConfig
 from huggingface_hub import snapshot_download
 
 logging.basicConfig(
@@ -61,23 +61,20 @@ class TTSGenerator:
                 use_fast=False,  # Disable fast tokenizer to avoid tiktoken issues
             )
 
-            # Try AutoModel first, fall back to AutoModelForCausalLM for custom configs
-            try:
-                self.model = AutoModel.from_pretrained(
-                    self.model_path,
-                    trust_remote_code=True,
-                    torch_dtype=torch.float16,
-                    low_cpu_mem_usage=True,
-                ).to(self.device)
-            except Exception as e:
-                logger.warning(f"AutoModel failed to load model: {e}")
-                logger.info("Trying to load with AutoModelForCausalLM...")
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_path,
-                    trust_remote_code=True,
-                    torch_dtype=torch.float16,
-                    low_cpu_mem_usage=True,
-                ).to(self.device)
+            # Load config first to register custom config class
+            config = AutoConfig.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+            )
+
+            # Load model using the registered custom class (AutoModel will use the custom class)
+            self.model = AutoModel.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+                torch_dtype=torch.float16,
+                low_cpu_mem_usage=True,
+                config=config,
+            ).to(self.device)
 
             self.model.eval()
             logger.info(f"Model loaded in {time.time() - start_time:.1f}s")
@@ -102,6 +99,9 @@ class TTSGenerator:
 
     def generate(self, text: str) -> Optional[Path]:
         """Generate voiceover audio from text with fallback to pyttsx3."""
+        # Ensure output directory exists early
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
         # Try main model first
         if self.model is None or self.tokenizer is None:
             if not self.load_model():
