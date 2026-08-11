@@ -16,11 +16,14 @@ useful-moonshine==20241016
 # TTS fallback
 pyttsx3==2.90
 
+# Tokenizer support
+sentencepiece
+
 # Utilities
 tqdm==4.66.0
 pyyaml==6.0.1
 requests==2.32.0
 protobuf==5.27.0
 
-# torchaudio (installed via PyTorch CPU index, keep in requirements to prevent uninstall)
+# torchaudio (installed via PyTorch CPU index)
 torchaudio
