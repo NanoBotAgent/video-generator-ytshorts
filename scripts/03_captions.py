@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Caption Module - Caption generation with fallback.
-Generates CapCut/TikTok-style .ass subtitle file.
+Caption Module - Moonshine Base (usefulsensors/moonshine-base) for word-level transcription.
+Generates CapCut/TikTok-style .ass subtitle file with active-word highlighting.
 """
 
 import os
@@ -15,6 +15,8 @@ from typing import List, Dict, Optional, Tuple
 
 import torch
 import numpy as np
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+from huggingface_hub import snapshot_download
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,57 +27,64 @@ logger = logging.getLogger(__name__)
 
 
 class CaptionGenerator:
-    """Caption generator with word-level timestamps for ASS generation."""
+    """Moonshine Base transcription with word-level timestamps for ASS generation."""
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
         self.output_dir = output_dir
         self.device = torch.device("cpu")
         self.model = None
+        self.processor = None
         self.sample_rate = 16000
+        self.model_path = Path.home() / ".cache" / "huggingface" / "hub" / "models--usefulsensors--moonshine-base"
 
     def load_model(self) -> bool:
-        """Try to load Moonshine model, fall back to simple timing."""
+        """Load Moonshine Base model."""
         try:
-            logger.info("Loading caption model...")
+            logger.info("Loading Moonshine Base model (this may take several minutes on CPU)...")
             start_time = time.time()
 
-            os.environ["KERAS_BACKEND"] = "torch"
-            
-            # Try to import useful_moonshine
-            try:
-                from useful_moonshine import MoonshineOnnxModel
-                self.model = MoonshineOnnxModel(model_name="base_en")
-                logger.info(f"Moonshine model loaded in {time.time() - start_time:.1f}s")
-                return True
-            except ImportError as e:
-                logger.warning(f"useful_moonshine not available: {e}")
-            
-            # Try alternative import
-            try:
-                import useful_moonshine
-                if hasattr(useful_moonshine, 'MoonshineOnnxModel'):
-                    self.model = useful_moonshine.MoonshineOnnxModel(model_name="base_en")
-                    logger.info(f"Moonshine model loaded (alt import) in {time.time() - start_time:.1f}s")
-                    return True
-            except (ImportError, AttributeError) as e:
-                logger.warning(f"Alternative import failed: {e}")
+            if not self.model_path.exists():
+                logger.info("Model not found locally, downloading...")
+                snapshot_download(
+                    repo_id="usefulsensors/moonshine-base",
+                    local_dir=self.model_path,
+                    local_dir_use_symlinks=False,
+                    resume_download=True,
+                )
 
-            logger.info("Using fallback caption timing")
-            return False
+            # Load processor
+            self.processor = AutoProcessor.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+            )
 
+            # Load model
+            self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+                torch_dtype=torch.float32,
+                low_cpu_mem_usage=True,
+            ).to(self.device)
+
+            self.model.eval()
+            logger.info(f"Moonshine model loaded in {time.time() - start_time:.1f}s")
+            return True
         except Exception as e:
             logger.error(f"Failed to load caption model: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
 
     def transcribe(self, audio_path: Path) -> List[Dict]:
         """Transcribe audio with word-level timestamps."""
-        if self.model is None:
+        if self.model is None or self.processor is None:
             if not self.load_model():
-                return self._fallback_transcribe(audio_path)
+                logger.error("Moonshine model failed to load")
+                return []
 
         try:
-            logger.info("Transcribing audio for captions...")
+            logger.info("Transcribing audio for captions with Moonshine (CPU mode - this may take several minutes)...")
             start_time = time.time()
 
             import soundfile as sf
@@ -86,16 +95,41 @@ class CaptionGenerator:
                 import librosa
                 audio = librosa.resample(audio, orig_sr=sr, target_sr=self.sample_rate)
 
-            result = self.model.transcribe(audio, word_timestamps=True)
+            # Process with Moonshine
+            inputs = self.processor(
+                audio,
+                sampling_rate=self.sample_rate,
+                return_tensors="pt",
+                return_word_timestamps=True,
+            ).to(self.device)
 
+            with torch.inference_mode():
+                outputs = self.model.generate(
+                    inputs["input_features"],
+                    return_timestamps="word",
+                    return_dict_in_generate=True,
+                )
+
+            # Extract words with timestamps
             words = []
-            for segment in result.get("segments", []):
-                for word_info in segment.get("words", []):
-                    words.append({
-                        "word": word_info["word"].strip(),
-                        "start": word_info["start"],
-                        "end": word_info["end"],
-                    })
+            if hasattr(outputs, "sequences") and hasattr(outputs, "word_timestamps"):
+                word_timestamps = outputs.word_timestamps[0]
+                token_ids = outputs.sequences[0]
+                
+                # Decode tokens to words with timestamps
+                for word_info in word_timestamps:
+                    word = word_info.get("word", "").strip()
+                    if word:
+                        words.append({
+                            "word": word,
+                            "start": word_info.get("start", 0.0),
+                            "end": word_info.get("end", 0.0),
+                        })
+            else:
+                # Fallback: decode without timestamps
+                transcription = self.processor.batch_decode(outputs.sequences, skip_special_tokens=True)[0]
+                logger.warning("Word timestamps not available, using fallback timing")
+                return self._fallback_transcribe_from_text(transcription)
 
             logger.info(f"Transcription complete in {time.time() - start_time:.1f}s "
                        f"({len(words)} words)")
@@ -103,6 +137,8 @@ class CaptionGenerator:
 
         except Exception as e:
             logger.error(f"Transcription failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return self._fallback_transcribe(audio_path)
 
     def _fallback_transcribe(self, audio_path: Path) -> List[Dict]:
@@ -117,13 +153,31 @@ class CaptionGenerator:
 
         logger.info(f"Using fallback timing for {duration:.1f}s audio")
 
-        # Simple fallback: estimate words from script_text
         script_text = self.config.get("script_text", "")
         words = script_text.split()
         if not words:
             words = ["Hello", "world", "this", "is", "a", "test"]
 
         word_duration = duration / len(words)
+        result = []
+        current_time = 0.0
+        for word in words:
+            result.append({
+                "word": word,
+                "start": current_time,
+                "end": current_time + word_duration * 0.9,
+            })
+            current_time += word_duration
+
+        return result
+
+    def _fallback_transcribe_from_text(self, text: str) -> List[Dict]:
+        """Generate fallback word timings from text."""
+        words = text.split()
+        if not words:
+            words = ["Hello", "world", "this", "is", "a", "test"]
+
+        word_duration = 0.5  # approximate
         result = []
         current_time = 0.0
         for word in words:
