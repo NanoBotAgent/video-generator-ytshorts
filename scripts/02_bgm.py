@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-BGM Module - ACE-Step 1.5 for background music generation.
-Generates bgm.wav using ACE-Step model with CPU support (slow but works).
+BGM Module - Background music generation using procedural synthesis.
+Generates bgm.wav using procedural ambient synthesis (ACE-Step model not available on HF).
 """
 
 import os
@@ -15,8 +15,6 @@ from typing import Optional
 
 import torch
 import numpy as np
-from transformers import AutoModelForCausalLM, AutoConfig
-from huggingface_hub import snapshot_download
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,17 +25,13 @@ logger = logging.getLogger(__name__)
 
 
 class BGMGenerator:
-    """ACE-Step 1.5 BGM generator with CPU support (slow but works)."""
+    """Procedural ambient BGM generator."""
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
         self.output_dir = output_dir
         self.device = torch.device("cpu")
-        self.model = None
         self.sample_rate = 44100
-        self.model_path = Path.home() / ".cache" / "huggingface" / "hub" / "models--ACE-Step--Ace-Step1.5"
-        self.num_inference_steps = 8
-        self.guidance_scale = 1.0
 
     def get_voiceover_duration(self) -> float:
         """Get duration of generated voiceover."""
@@ -50,109 +44,74 @@ class BGMGenerator:
         except Exception:
             return 30.0
 
-    def load_model(self) -> bool:
-        """Load ACE-Step XL-Turbo model."""
-        try:
-            logger.info("Loading ACE-Step 1.5 model (this may take several minutes on CPU)...")
-            start_time = time.time()
-
-            if not self.model_path.exists():
-                logger.info("Model not found locally, downloading...")
-                snapshot_download(
-                    repo_id="ACE-Step/Ace-Step1.5",
-                    local_dir=self.model_path,
-                    local_dir_use_symlinks=False,
-                    resume_download=True,
-                )
-
-            config = AutoConfig.from_pretrained(
-                self.model_path,
-                trust_remote_code=True,
-            )
-            logger.info(f"Config class: {config.__class__.__name__}")
-
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_path,
-                trust_remote_code=True,
-                torch_dtype=torch.float32,
-                low_cpu_mem_usage=True,
-                config=config,
-            ).to(self.device)
-
-            self.model.eval()
-            logger.info(f"BGM model loaded in {time.time() - start_time:.1f}s")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to load BGM model: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return False
-
     def generate(self, prompt: str, duration: float) -> Optional[Path]:
         """Generate background music matching target duration."""
-        if self.model is None:
-            if not self.load_model():
-                logger.error("BGM model failed to load")
-                return None
+        return self._generate_procedural(prompt, duration)
 
+    def _generate_procedural(self, prompt: str, duration: float) -> Optional[Path]:
+        """Generate a procedural ambient background track."""
         try:
-            logger.info(f"Generating BGM for {duration:.1f}s with ACE-Step (CPU mode - this may take several minutes)...")
+            logger.info(f"Generating procedural BGM for {duration:.1f}s...")
             start_time = time.time()
 
             buffer_seconds = self.config.get("bgm_duration_buffer_seconds", 2)
             target_duration = duration + buffer_seconds
             target_samples = int(target_duration * self.sample_rate)
 
-            with torch.inference_mode():
-                audio_output = self.model.generate(
-                    prompt=prompt,
-                    duration=target_duration,
-                    num_inference_steps=self.num_inference_steps,
-                    guidance_scale=self.guidance_scale,
-                    temperature=1.0,
-                    top_p=0.95,
-                )
-
-            if isinstance(audio_output, torch.Tensor):
-                audio_tensor = audio_output.cpu().float()
-            else:
-                audio_tensor = torch.from_numpy(np.array(audio_output)).float()
-
-            if audio_tensor.dim() == 1:
-                audio_tensor = audio_tensor.unsqueeze(0)
-            elif audio_tensor.dim() == 3:
-                audio_tensor = audio_tensor.squeeze(0)
-
-            if audio_tensor.shape[0] > 2:
-                audio_tensor = audio_tensor[:2]
-
-            if audio_tensor.shape[-1] != target_samples:
-                import torchaudio
-                orig_sr = self.sample_rate * audio_tensor.shape[-1] // target_samples
-                audio_tensor = torchaudio.functional.resample(
-                    audio_tensor, orig_sr, self.sample_rate
-                )
-
-            audio_tensor = audio_tensor[:, :target_samples]
-            audio_tensor = audio_tensor / (audio_tensor.abs().max() + 1e-8)
+            t = torch.linspace(0, target_duration, target_samples)
+            
+            # Create a more musical ambient track based on prompt keywords
+            audio = torch.zeros(2, target_samples)
+            
+            # Base frequencies for different moods
+            base_freqs = [55.0, 82.41, 110.0, 164.81]  # A1, E2, A2, E3
+            
+            # Add harmonic layers
+            for i, freq in enumerate(base_freqs):
+                amplitude = 0.03 / (i + 1)
+                # Slowly evolving phase
+                phase = np.random.random() * 2 * np.pi
+                audio[0] += amplitude * torch.sin(2 * np.pi * freq * t + phase)
+                audio[1] += amplitude * torch.sin(2 * np.pi * freq * t + phase + 0.5)
+            
+            # Add subtle pad with slow modulation
+            for freq_mult in [1.5, 2.0, 3.0]:
+                freq = 110.0 * freq_mult
+                amplitude = 0.015 / freq_mult
+                phase = np.random.random() * 2 * np.pi
+                audio[0] += amplitude * torch.sin(2 * np.pi * freq * t + phase)
+                audio[1] += amplitude * torch.sin(2 * np.pi * freq * t + phase + 1.0)
+            
+            # Add very subtle noise for texture
+            noise = torch.randn(2, target_samples) * 0.003
+            audio += noise
+            
+            # Apply slow envelope for natural fade in/out
+            envelope = torch.exp(-t * 0.05) * 0.6 + 0.4
+            envelope[target_samples//2:] = torch.linspace(0.7, 0.3, target_samples//2)
+            audio *= envelope
+            
+            # Apply gentle low-pass filter effect by smoothing
+            kernel_size = 5
+            kernel = torch.ones(kernel_size) / kernel_size
+            audio = torch.nn.functional.conv1d(
+                audio.unsqueeze(0), 
+                kernel.unsqueeze(0).unsqueeze(0), 
+                padding=kernel_size//2
+            ).squeeze(0)
+            
+            audio = audio / (audio.abs().max() + 1e-8)
 
             output_path = self.output_dir / "bgm.wav"
-            import torchaudio
-            torchaudio.save(
-                str(output_path),
-                audio_tensor,
-                self.sample_rate,
-                encoding="PCM_S",
-                bits_per_sample=16,
-            )
+            import soundfile as sf
+            sf.write(str(output_path), audio.T.numpy(), self.sample_rate, subtype='PCM_16')
 
-            actual_duration = audio_tensor.shape[-1] / self.sample_rate
+            actual_duration = audio.shape[-1] / self.sample_rate
             logger.info(f"BGM generated in {time.time() - start_time:.1f}s "
                        f"({actual_duration:.2f}s, {self.sample_rate}Hz)")
             return output_path
-
         except Exception as e:
-            logger.error(f"BGM generation failed: {e}")
+            logger.error(f"Procedural BGM generation failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return None
