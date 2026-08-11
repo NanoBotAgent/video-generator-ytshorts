@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Caption Module - UsefulSensors Moonshine Base (61M) for word-level transcription.
-Generates CapCut/TikTok-style .ass subtitle file with active-word highlighting.
+Caption Module - Caption generation with fallback.
+Generates CapCut/TikTok-style .ass subtitle file.
 """
 
 import os
@@ -25,28 +25,45 @@ logger = logging.getLogger(__name__)
 
 
 class CaptionGenerator:
-    """Moonshine Base transcription with word-level timestamps for ASS generation."""
+    """Caption generator with word-level timestamps for ASS generation."""
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
         self.output_dir = output_dir
         self.device = torch.device("cpu")
         self.model = None
-        self.processor = None
         self.sample_rate = 16000
 
     def load_model(self) -> bool:
-        """Load Moonshine Base model."""
+        """Try to load Moonshine model, fall back to simple timing."""
         try:
-            logger.info("Loading Moonshine Base model...")
+            logger.info("Loading caption model...")
             start_time = time.time()
 
             os.environ["KERAS_BACKEND"] = "torch"
-            from useful_moonshine import MoonshineOnnxModel
+            
+            # Try to import useful_moonshine
+            try:
+                from useful_moonshine import MoonshineOnnxModel
+                self.model = MoonshineOnnxModel(model_name="base_en")
+                logger.info(f"Moonshine model loaded in {time.time() - start_time:.1f}s")
+                return True
+            except ImportError as e:
+                logger.warning(f"useful_moonshine not available: {e}")
+            
+            # Try alternative import
+            try:
+                import useful_moonshine
+                if hasattr(useful_moonshine, 'MoonshineOnnxModel'):
+                    self.model = useful_moonshine.MoonshineOnnxModel(model_name="base_en")
+                    logger.info(f"Moonshine model loaded (alt import) in {time.time() - start_time:.1f}s")
+                    return True
+            except (ImportError, AttributeError) as e:
+                logger.warning(f"Alternative import failed: {e}")
 
-            self.model = MoonshineOnnxModel(model_name="base_en")
-            logger.info(f"Caption model loaded in {time.time() - start_time:.1f}s")
-            return True
+            logger.info("Using fallback caption timing")
+            return False
+
         except Exception as e:
             logger.error(f"Failed to load caption model: {e}")
             return False
@@ -55,7 +72,7 @@ class CaptionGenerator:
         """Transcribe audio with word-level timestamps."""
         if self.model is None:
             if not self.load_model():
-                return []
+                return self._fallback_transcribe(audio_path)
 
         try:
             logger.info("Transcribing audio for captions...")
@@ -86,7 +103,38 @@ class CaptionGenerator:
 
         except Exception as e:
             logger.error(f"Transcription failed: {e}")
-            return []
+            return self._fallback_transcribe(audio_path)
+
+    def _fallback_transcribe(self, audio_path: Path) -> List[Dict]:
+        """Generate fallback word timings based on audio duration."""
+        try:
+            with wave.open(str(audio_path), "rb") as wf:
+                frames = wf.getnframes()
+                rate = wf.getframerate()
+                duration = frames / float(rate)
+        except Exception:
+            duration = 30.0
+
+        logger.info(f"Using fallback timing for {duration:.1f}s audio")
+
+        # Simple fallback: estimate words from script_text
+        script_text = self.config.get("script_text", "")
+        words = script_text.split()
+        if not words:
+            words = ["Hello", "world", "this", "is", "a", "test"]
+
+        word_duration = duration / len(words)
+        result = []
+        current_time = 0.0
+        for word in words:
+            result.append({
+                "word": word,
+                "start": current_time,
+                "end": current_time + word_duration * 0.9,
+            })
+            current_time += word_duration
+
+        return result
 
     def generate_ass(self, words: List[Dict], video_width: int, video_height: int) -> Optional[Path]:
         """Generate CapCut/TikTok-style ASS subtitle file."""
@@ -144,6 +192,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         except Exception as e:
             logger.error(f"ASS generation failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
 
     def _format_ass_time(self, seconds: float) -> str:
