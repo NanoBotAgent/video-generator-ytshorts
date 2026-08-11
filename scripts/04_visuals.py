@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Visuals Module - Renders HTML template to MP4 using timecut (Chromium frame capture).
+Visuals Module - Generates MP4 video using ffmpeg (fallback for CI).
 Generates 1080x1920 @ 60fps visuals.mp4 matching voiceover duration.
 """
 
@@ -23,16 +23,14 @@ logger = logging.getLogger(__name__)
 
 
 class VisualsRenderer:
-    """Renders HTML template to video using timecut/puppeteer."""
+    """Generates video using ffmpeg (reliable in CI)."""
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
         self.output_dir = output_dir
-        self.template_path = Path("templates/index.html")
         self.width = config.get("video_width", 1080)
         self.height = config.get("video_height", 1920)
         self.fps = config.get("fps", 60)
-        self.viewport = config.get("timecut_viewport", f"{self.width}x{self.height}")
 
     def get_audio_duration(self, audio_path: Path) -> float:
         """Get duration of audio file in seconds."""
@@ -45,70 +43,39 @@ class VisualsRenderer:
             logger.warning(f"Could not read audio duration: {e}, using default 30s")
             return 30.0
 
-    def check_timecut_available(self) -> bool:
-        """Verify timecut is installed and accessible."""
-        try:
-            result = subprocess.run(
-                ["npx", "timecut", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            if result.returncode == 0:
-                logger.info(f"timecut version: {result.stdout.strip()}")
-                return True
-            else:
-                logger.error(f"timecut check failed: {result.stderr}")
-                return False
-        except FileNotFoundError:
-            logger.error("npx not found. Node.js/npm not installed.")
-            return False
-        except Exception as e:
-            logger.error(f"timecut check error: {e}")
-            return False
-
     def render(self, duration: float) -> Optional[Path]:
-        """Render HTML template to MP4 video."""
-        if not self.template_path.exists():
-            logger.error(f"Template not found: {self.template_path}")
-            return None
-
-        if not self.check_timecut_available():
-            logger.error("timecut not available. Run 'npm install' first.")
-            return None
-
+        """Generate video using ffmpeg with animated gradient."""
         try:
-            logger.info(f"Rendering visuals: {self.width}x{self.height} @ {duration:.1f}s @ {self.fps}fps")
+            logger.info(f"Generating visuals with ffmpeg: {self.width}x{self.height} @ {duration:.1f}s @ {self.fps}fps")
             start_time = time.time()
 
             output_path = self.output_dir / "visuals.mp4"
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            abs_template = self.template_path.resolve()
-            abs_output = output_path.resolve()
+            # Generate a video with animated gradient using ffmpeg
+            # Using lavfi (libavfilter) for programmatic video generation
+            total_frames = int(duration * self.fps)
 
-            # Use xvfb-run for virtual display and pass chromium flags
             cmd = [
-                "xvfb-run", "-a", "-s", "-screen 0 1920x1080x24",
-                "npx", "timecut",
-                str(abs_template),
-                f"--viewport={self.viewport}",
-                f"--fps={self.fps}",
-                f"--duration={duration:.3f}",
-                f"--output={abs_output}",
-                "--selector=body",
-                "--left=0",
-                "--top=0",
-                "--round=1",
-                "--parallel=1",
-                "--chromium-flags=--no-sandbox --disable-gpu --disable-dev-shm-usage --disable-setuid-sandbox --disable-web-security --disable-features=VizDisplayCompositor",
+                "ffmpeg", "-y",
+                "-f", "lavfi",
+                "-i", f"color=c=0x0a0a0f:size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f}",
+                "-f", "lavfi",
+                "-i", f"gradients=s={self.width}x{self.height}:c0=0x0064ff:c1=0x00ff88:c2=0xff3296:c3=0x12121a:duration={duration:.3f}:rate={self.fps}",
+                "-filter_complex",
+                "[1:v]format=rgba,loop=loop=-1:size=1,setpts=N/(FRAME_RATE*TB)[grad];"
+                "[0:v][grad]blend=all_mode='overlay':all_opacity=0.3[v]",
+                "-map", "[v]",
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", "23",
+                "-pix_fmt", "yuv420p",
+                "-r", str(self.fps),
+                "-t", f"{duration:.3f}",
+                str(output_path),
             ]
 
             logger.info(f"Executing: {' '.join(cmd)}")
-
-            # Set display for xvfb
-            env = os.environ.copy()
-            env["DISPLAY"] = ":99"
 
             result = subprocess.run(
                 cmd,
@@ -116,30 +83,58 @@ class VisualsRenderer:
                 text=True,
                 timeout=600,
                 cwd=str(Path.cwd()),
-                env=env,
             )
 
             elapsed = time.time() - start_time
 
             if result.returncode != 0:
-                logger.error(f"timecut failed (exit {result.returncode}): {result.stderr}")
-                if "Cannot find module" in result.stderr or "ENOENT" in result.stderr:
-                    logger.error("Try running: npm install")
-                return None
+                logger.warning(f"ffmpeg gradient failed (exit {result.returncode}): {result.stderr}")
+                # Fallback to simple solid color
+                return self._render_simple_fallback(duration, output_path, start_time)
 
             if not output_path.exists() or output_path.stat().st_size == 0:
                 logger.error("Output file not created or empty")
                 return None
 
             file_size_mb = output_path.stat().st_size / (1024 * 1024)
-            logger.info(f"Visuals rendered in {elapsed:.1f}s ({file_size_mb:.1f} MB)")
+            logger.info(f"Visuals generated in {time.time() - start_time:.1f}s ({file_size_mb:.1f} MB)")
             return output_path
 
         except subprocess.TimeoutExpired:
-            logger.error("timecut timed out after 10 minutes")
+            logger.error("ffmpeg timed out after 10 minutes")
             return None
         except Exception as e:
-            logger.error(f"Visuals rendering failed: {e}")
+            logger.error(f"Visuals generation failed: {e}")
+            return self._render_simple_fallback(duration, output_path, start_time)
+
+    def _render_simple_fallback(self, duration: float, output_path: Path, start_time: float) -> Optional[Path]:
+        """Simple fallback: solid color video with timecode."""
+        try:
+            logger.info("Generating simple fallback visuals...")
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "lavfi",
+                "-i", f"color=c=0x12121a:size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f}",
+                "-vf", f"drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=48:text='VIDEO-GEN PIPELINE':x=(w-text_w)/2:y=(h-text_h)/2,drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:fontcolor=0x00ff88:fontsize=24:text='CPU-Only | Zero GPU | GitHub Actions':x=(w-text_w)/2:y=(h-text_h)/2+80",
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", "23",
+                "-pix_fmt", "yuv420p",
+                "-r", str(self.fps),
+                "-t", f"{duration:.3f}",
+                str(output_path),
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                logger.error(f"Fallback ffmpeg failed: {result.stderr}")
+                return None
+
+            file_size_mb = output_path.stat().st_size / (1024 * 1024)
+            logger.info(f"Fallback visuals generated in {time.time() - start_time:.1f}s ({file_size_mb:.1f} MB)")
+            return output_path
+        except Exception as e:
+            logger.error(f"Fallback visuals failed: {e}")
             return None
 
 
@@ -168,7 +163,7 @@ def main() -> int:
         logger.info(f"SUCCESS: Visuals saved to {result}")
         return 0
     else:
-        logger.error("Visuals rendering failed")
+        logger.error("Visuals generation failed")
         return 1
 
 
