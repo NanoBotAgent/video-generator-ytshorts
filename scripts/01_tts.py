@@ -2,7 +2,7 @@
 """
 TTS Module - Step Audio EditX (3B Q8 quantized) for voiceover generation.
 Generates voiceover.wav with zero-shot voice cloning and paralinguistic tag support.
-Falls back to pyttsx3 if CUDA libraries are missing or tokenizer fails.
+Falls back to pyttsx3 if tokenizer/model fails.
 """
 
 import os
@@ -55,20 +55,6 @@ class TTSGenerator:
                 )
 
             # Load tokenizer with proper handling for SentencePiece tokenizer
-            tokenizer_path = self.model_path / "tokenizer.model"
-            if not tokenizer_path.exists():
-                # Check for tokenizer files in common locations
-                for potential_path in [
-                    self.model_path / "tokenizer.model",
-                    self.model_path / "tokenizer.json",
-                    self.model_path / "tokenizer_config.json",
-                ]:
-                    if potential_path.exists():
-                        logger.info(f"Found tokenizer at {potential_path}")
-                        break
-                else:
-                    logger.warning("No tokenizer.model found, trying to load with AutoTokenizer")
-
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_path,
                 trust_remote_code=True,
@@ -168,12 +154,6 @@ class TTSGenerator:
                        f"({duration:.2f}s, {target_sr}Hz, mono)")
             return output_path
 
-        except OSError as e:
-            if "libcudart" in str(e) or "cuda" in str(e).lower():
-                logger.warning(f"CUDA library error in torchaudio: {e}. Falling back to pyttsx3...")
-                return self._generate_fallback(text)
-            logger.error(f"TTS generation failed with OSError: {e}")
-            return self._generate_fallback(text)
         except Exception as e:
             logger.error(f"TTS generation failed: {e}")
             return self._generate_fallback(text)
@@ -183,6 +163,9 @@ class TTSGenerator:
         try:
             logger.info("Generating voiceover with pyttsx3 fallback...")
             start_time = time.time()
+
+            # Ensure output directory exists
+            self.output_dir.mkdir(parents=True, exist_ok=True)
 
             import pyttsx3
             engine = pyttsx3.init()
