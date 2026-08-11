@@ -54,13 +54,6 @@ class TTSGenerator:
                     resume_download=True,
                 )
 
-            # Debug: List the model directory structure
-            logger.info(f"Model path contents: {list(self.model_path.iterdir())}")
-            transformers_modules_path = self.model_path / "transformers_modules"
-            if transformers_modules_path.exists():
-                logger.info(f"transformers_modules contents: {list(transformers_modules_path.rglob('*'))}")
-                sys.path.insert(0, str(transformers_modules_path))
-
             # Load tokenizer with proper handling for SentencePiece tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_path,
@@ -76,38 +69,21 @@ class TTSGenerator:
             logger.info(f"Config class: {config.__class__.__name__}")
             logger.info(f"Config model_type: {getattr(config, 'model_type', 'unknown')}")
 
-            # Import and load the custom model class directly
+            # Import the custom model class from the model directory
+            # The modeling_step1.py is directly in the model path
             model_class = None
             try:
-                # Try to get the model class from transformers_modules
                 import importlib.util
-                spec = importlib.util.spec_from_file_location(
-                    "modeling_step1", 
-                    transformers_modules_path / "models" / "step1" / "modeling_step1.py"
-                )
-                if spec and spec.loader:
-                    module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
-                    model_class = getattr(module, "Step1ForCausalLM", None)
-                    logger.info(f"Found model class via importlib: {model_class}")
+                modeling_path = self.model_path / "modeling_step1.py"
+                if modeling_path.exists():
+                    spec = importlib.util.spec_from_file_location("modeling_step1", modeling_path)
+                    if spec and spec.loader:
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+                        model_class = getattr(module, "Step1ForCausalLM", None)
+                        logger.info(f"Found model class via importlib: {model_class}")
             except Exception as e:
                 logger.warning(f"Importlib approach failed: {e}")
-
-            if model_class is None:
-                # Try direct import from various paths
-                for import_path in [
-                    "models.step1.modeling_step1",
-                    "modeling_step1",
-                    "step1.modeling_step1",
-                ]:
-                    try:
-                        module = __import__(import_path, fromlist=["Step1ForCausalLM"])
-                        model_class = getattr(module, "Step1ForCausalLM", None)
-                        if model_class:
-                            logger.info(f"Found model class via {import_path}: {model_class}")
-                            break
-                    except ImportError as e:
-                        logger.debug(f"Import {import_path} failed: {e}")
 
             if model_class is None:
                 logger.error("Could not find Step1ForCausalLM model class")
@@ -236,6 +212,14 @@ class TTSGenerator:
             output_path = self.output_dir / "voiceover.wav"
             engine.save_to_file(text, str(output_path))
             engine.runAndWait()
+
+            # Wait a bit for file to be written
+            time.sleep(1)
+
+            # Verify file exists before reading
+            if not output_path.exists():
+                logger.error(f"Output file not created: {output_path}")
+                return None
 
             # Convert to desired sample rate if needed
             import soundfile as sf
