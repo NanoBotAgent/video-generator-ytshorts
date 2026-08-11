@@ -87,7 +87,9 @@ class VisualsRenderer:
             abs_template = self.template_path.resolve()
             abs_output = output_path.resolve()
 
+            # Use xvfb-run for virtual display and pass chromium flags
             cmd = [
+                "xvfb-run", "-a", "-s", "-screen 0 1920x1080x24",
                 "npx", "timecut",
                 str(abs_template),
                 f"--viewport={self.viewport}",
@@ -99,10 +101,14 @@ class VisualsRenderer:
                 "--top=0",
                 "--round=1",
                 "--parallel=1",
-                "--no-sandbox",  # Required for GitHub Actions / CI environments
+                "--chromium-flags=--no-sandbox --disable-gpu --disable-dev-shm-usage --disable-setuid-sandbox --disable-web-security --disable-features=VizDisplayCompositor",
             ]
 
             logger.info(f"Executing: {' '.join(cmd)}")
+
+            # Set display for xvfb
+            env = os.environ.copy()
+            env["DISPLAY"] = ":99"
 
             result = subprocess.run(
                 cmd,
@@ -110,6 +116,7 @@ class VisualsRenderer:
                 text=True,
                 timeout=600,
                 cwd=str(Path.cwd()),
+                env=env,
             )
 
             elapsed = time.time() - start_time
