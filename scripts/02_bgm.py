@@ -14,9 +14,12 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-import torchaudio
 import numpy as np
 from huggingface_hub import snapshot_download
+
+# Force CPU-only for torchaudio to avoid CUDA loading issues
+os.environ["TORCHAUDIO_USE_BACKEND_DISPATCHER"] = "0"
+os.environ["TORCHAUDIO_BACKEND"] = "sox_io"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,6 +27,16 @@ logging.basicConfig(
     datefmt="%H:%M:%S"
 )
 logger = logging.getLogger(__name__)
+
+
+# Try to import torchaudio, fall back to soundfile if CUDA issues
+try:
+    import torchaudio
+    TORCHAUDIO_AVAILABLE = True
+except (ImportError, OSError) as e:
+    logger.warning(f"torchaudio not available (CUDA issue): {e}")
+    TORCHAUDIO_AVAILABLE = False
+    import soundfile as sf
 
 
 class BGMGenerator:
@@ -118,23 +131,35 @@ class BGMGenerator:
                 audio_tensor = audio_tensor[:2]
 
             if audio_tensor.shape[-1] != target_samples:
-                audio_tensor = torchaudio.functional.resample(
-                    audio_tensor, 
-                    self.sample_rate * audio_tensor.shape[-1] // target_samples,
-                    self.sample_rate
-                )
+                if TORCHAUDIO_AVAILABLE:
+                    orig_sr = self.sample_rate * audio_tensor.shape[-1] // target_samples
+                    audio_tensor = torchaudio.functional.resample(
+                        audio_tensor, orig_sr, self.sample_rate
+                    )
+                else:
+                    # Simple linear interpolation fallback
+                    audio_tensor = torch.nn.functional.interpolate(
+                        audio_tensor.unsqueeze(0),
+                        size=target_samples,
+                        mode='linear',
+                        align_corners=False
+                    ).squeeze(0)
 
             audio_tensor = audio_tensor[:, :target_samples]
             audio_tensor = audio_tensor / (audio_tensor.abs().max() + 1e-8)
 
             output_path = self.output_dir / "bgm.wav"
-            torchaudio.save(
-                str(output_path),
-                audio_tensor,
-                self.sample_rate,
-                encoding="PCM_S",
-                bits_per_sample=16,
-            )
+            if TORCHAUDIO_AVAILABLE:
+                torchaudio.save(
+                    str(output_path),
+                    audio_tensor,
+                    self.sample_rate,
+                    encoding="PCM_S",
+                    bits_per_sample=16,
+                )
+            else:
+                import soundfile as sf
+                sf.write(str(output_path), audio_tensor.T.numpy(), self.sample_rate, subtype='PCM_16')
 
             actual_duration = audio_tensor.shape[-1] / self.sample_rate
             logger.info(f"BGM generated in {time.time() - start_time:.1f}s "
@@ -143,6 +168,8 @@ class BGMGenerator:
 
         except Exception as e:
             logger.error(f"BGM generation failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return self._generate_fallback(duration)
 
     def _generate_fallback(self, duration: float) -> Optional[Path]:
@@ -172,13 +199,17 @@ class BGMGenerator:
             audio = audio / (audio.abs().max() + 1e-8)
 
             output_path = self.output_dir / "bgm.wav"
-            torchaudio.save(
-                str(output_path),
-                audio,
-                self.sample_rate,
-                encoding="PCM_S",
-                bits_per_sample=16,
-            )
+            if TORCHAUDIO_AVAILABLE:
+                torchaudio.save(
+                    str(output_path),
+                    audio,
+                    self.sample_rate,
+                    encoding="PCM_S",
+                    bits_per_sample=16,
+                )
+            else:
+                import soundfile as sf
+                sf.write(str(output_path), audio.T.numpy(), self.sample_rate, subtype='PCM_16')
             logger.info(f"Fallback BGM saved to {output_path}")
             return output_path
         except Exception as e:
