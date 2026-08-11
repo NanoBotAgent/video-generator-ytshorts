@@ -68,31 +68,6 @@ class VideoAssembler:
         except Exception:
             return False
 
-    def build_filter_graph(self) -> str:
-        """Build FFmpeg filter graph with sidechain ducking and subtitle burning."""
-        duck = self.bgm_duck_level
-
-        # Use proper filter graph with numbered pad names
-        # Input 0: visuals (video only)
-        # Input 1: voiceover (audio only)  
-        # Input 2: bgm (audio only)
-        filter_parts = [
-            # Process voiceover (input 1) - normalize volume
-            "[1:a]volume=1.0,volume=1.0[voice]",
-            # Process bgm (input 2) - normalize volume  
-            "[2:a]volume=1.0[bgm]",
-            # Sidechain: duck bgm when voice is present
-            "[bgm][voice]sidechaincompress=threshold=0.003:ratio=20:attack=5:release=100:makeup=1[ducked]",
-            # Apply duck level
-            f"[ducked]volume={duck}[bgm_final]",
-            # Mix voice and ducked bgm
-            "[voice][bgm_final]amix=inputs=2:duration=first:dropout_transition=0[audio_out]",
-            # Burn subtitles (captions.ass) onto video (input 0)
-            f"[0:v]ass='{self.output_dir / 'captions.ass'}'[vout]",
-        ]
-
-        return ";".join(filter_parts)
-
     def assemble(self) -> Optional[Path]:
         """Run FFmpeg to assemble final video."""
         if not self.check_ffmpeg():
@@ -118,8 +93,26 @@ class VideoAssembler:
             start_time = time.time()
 
             output_path = self.output_dir / "final_video.mp4"
+            duck = self.bgm_duck_level
+            captions_path = str(required_files["captions"]).replace("'", "\\'")
 
-            filter_graph = self.build_filter_graph()
+            # Simplified filter graph:
+            # Input 0: visuals.mp4 (video only)
+            # Input 1: voiceover.wav (audio only)  
+            # Input 2: bgm.wav (audio only)
+            #
+            # We use explicit stream mapping:
+            # - 0:v for video from visuals
+            # - 1:a for audio from voiceover
+            # - 2:a for audio from bgm
+            filter_graph = (
+                f"[1:a]volume=1.0[voice];"
+                f"[2:a]volume=1.0[bgm];"
+                f"[bgm][voice]sidechaincompress=threshold=0.003:ratio=20:attack=5:release=100:makeup=1[ducked];"
+                f"[ducked]volume={duck}[bgm_final];"
+                f"[voice][bgm_final]amix=inputs=2:duration=first:dropout_transition=0[audio_out];"
+                f"[0:v]ass='{captions_path}'[vout]"
+            )
 
             cmd = [
                 "ffmpeg", "-y",
@@ -155,7 +148,8 @@ class VideoAssembler:
 
             if result.returncode != 0:
                 logger.error(f"FFmpeg failed (exit {result.returncode}): {result.stderr[-2000:]}")
-                return None
+                # Try fallback without sidechain
+                return self._assemble_fallback(required_files, output_path, captions_path, start_time)
 
             if not output_path.exists() or output_path.stat().st_size == 0:
                 logger.error("Output file not created or empty")
@@ -170,6 +164,56 @@ class VideoAssembler:
             return None
         except Exception as e:
             logger.error(f"Assembly failed: {e}")
+            return self._assemble_fallback(required_files, output_path, captions_path, start_time)
+
+    def _assemble_fallback(self, required_files: dict, output_path: Path, captions_path: str, start_time: float) -> Optional[Path]:
+        """Fallback assembly without sidechain compression."""
+        try:
+            logger.info("Trying fallback assembly without sidechain...")
+            filter_graph = (
+                f"[1:a]volume=1.0[voice];"
+                f"[2:a]volume={self.bgm_duck_level}[bgm];"
+                f"[voice][bgm]amix=inputs=2:duration=first:dropout_transition=0[audio_out];"
+                f"[0:v]ass='{captions_path}'[vout]"
+            )
+
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(required_files["visuals"]),
+                "-i", str(required_files["voiceover"]),
+                "-i", str(required_files["bgm"]),
+                "-filter_complex", filter_graph,
+                "-map", "[vout]",
+                "-map", "[audio_out]",
+                "-c:v", "libx264",
+                "-preset", self.ffmpeg_preset,
+                "-crf", str(self.ffmpeg_crf),
+                "-pix_fmt", "yuv420p",
+                "-r", str(self.fps),
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-ar", "44100",
+                "-movflags", "+faststart",
+                "-shortest",
+                str(output_path),
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+            if result.returncode != 0:
+                logger.error(f"Fallback FFmpeg failed: {result.stderr[-2000:]}")
+                return None
+
+            if not output_path.exists() or output_path.stat().st_size == 0:
+                logger.error("Output file not created or empty")
+                return None
+
+            file_size_mb = output_path.stat().st_size / (1024 * 1024)
+            logger.info(f"Fallback assembly complete in {time.time() - start_time:.1f}s ({file_size_mb:.1f} MB)")
+            return output_path
+
+        except Exception as e:
+            logger.error(f"Fallback assembly failed: {e}")
             return None
 
 
