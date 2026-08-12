@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-BGM Module - Background music generation using procedural synthesis.
-Generates bgm.wav using procedural ambient synthesis (ACE-Step model not available on HF).
+BGM Module - Facebook MusicGen-Small (300M) for background music generation.
+ACE-Step requires custom pipeline; MusicGen is natively supported in transformers.
+Generates bgm.wav via text-to-audio model on CPU, matching voiceover duration.
 """
 
 import os
@@ -25,13 +26,38 @@ logger = logging.getLogger(__name__)
 
 
 class BGMGenerator:
-    """Procedural ambient BGM generator."""
+    """MusicGen-Small BGM generator for CPU."""
+
+    MODEL_ID = "facebook/musicgen-small"
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
         self.output_dir = output_dir
         self.device = torch.device("cpu")
-        self.sample_rate = 44100
+        self.model = None
+        self.processor = None
+        self.target_sr = 44100
+
+    def load_model(self) -> bool:
+        """Load MusicGen-Small model."""
+        try:
+            logger.info(f"Loading {self.MODEL_ID} on CPU...")
+            start_time = time.time()
+
+            from transformers import AutoProcessor, MusicgenForConditionalGeneration
+
+            self.processor = AutoProcessor.from_pretrained(self.MODEL_ID)
+            self.model = MusicgenForConditionalGeneration.from_pretrained(
+                self.MODEL_ID,
+                torch_dtype=torch.float32,
+            ).to(self.device)
+            self.model.eval()
+
+            logger.info(f"BGM model loaded in {time.time() - start_time:.1f}s")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load BGM model: {e}")
+            return False
 
     def get_voiceover_duration(self) -> float:
         """Get duration of generated voiceover."""
@@ -46,78 +72,76 @@ class BGMGenerator:
 
     def generate(self, prompt: str, duration: float) -> Optional[Path]:
         """Generate background music matching target duration."""
-        return self._generate_procedural(prompt, duration)
+        if self.model is None or self.processor is None:
+            if not self.load_model():
+                logger.error("Model failed to load")
+                return None
 
-    def _generate_procedural(self, prompt: str, duration: float) -> Optional[Path]:
-        """Generate a procedural ambient background track."""
         try:
-            logger.info(f"Generating procedural BGM for {duration:.1f}s...")
+            logger.info(f"Generating BGM for ~{duration:.1f}s...")
             start_time = time.time()
 
             buffer_seconds = self.config.get("bgm_duration_buffer_seconds", 2)
             target_duration = duration + buffer_seconds
-            target_samples = int(target_duration * self.sample_rate)
 
-            t = torch.linspace(0, target_duration, target_samples)
-            
-            # Create a more musical ambient track based on prompt keywords
-            audio = torch.zeros(2, target_samples)
-            
-            # Base frequencies for different moods
-            base_freqs = [55.0, 82.41, 110.0, 164.81]  # A1, E2, A2, E3
-            
-            # Add harmonic layers
-            for i, freq in enumerate(base_freqs):
-                amplitude = 0.03 / (i + 1)
-                # Slowly evolving phase
-                phase = np.random.random() * 2 * np.pi
-                audio[0] += amplitude * torch.sin(2 * np.pi * freq * t + phase)
-                audio[1] += amplitude * torch.sin(2 * np.pi * freq * t + phase + 0.5)
-            
-            # Add subtle pad with slow modulation
-            for freq_mult in [1.5, 2.0, 3.0]:
-                freq = 110.0 * freq_mult
-                amplitude = 0.015 / freq_mult
-                phase = np.random.random() * 2 * np.pi
-                audio[0] += amplitude * torch.sin(2 * np.pi * freq * t + phase)
-                audio[1] += amplitude * torch.sin(2 * np.pi * freq * t + phase + 1.0)
-            
-            # Add very subtle noise for texture
-            noise = torch.randn(2, target_samples) * 0.003
-            audio += noise
-            
-            # Apply slow envelope for natural fade in/out
-            envelope = torch.exp(-t * 0.05) * 0.6 + 0.4
-            envelope[target_samples//2:] = torch.linspace(0.7, 0.3, target_samples//2)
-            audio *= envelope
-            
-            # Apply gentle low-pass filter effect by smoothing (per channel)
-            kernel_size = 5
-            kernel = torch.ones(kernel_size) / kernel_size
-            # Process each channel separately
-            audio_filtered = torch.zeros_like(audio)
-            for ch in range(2):
-                audio_filtered[ch] = torch.nn.functional.conv1d(
-                    audio[ch].unsqueeze(0).unsqueeze(0), 
-                    kernel.unsqueeze(0).unsqueeze(0), 
-                    padding=kernel_size//2
-                ).squeeze(0).squeeze(0)
-            audio = audio_filtered
-            
-            audio = audio / (audio.abs().max() + 1e-8)
+            # MusicGen generates ~50 tokens/second (32kHz, 4 codebooks)
+            # Max new tokens = duration * 50, cap to avoid timeout
+            max_tokens = min(int(target_duration * 50), 1500)
+            logger.info(f"Using max_new_tokens={max_tokens}")
 
-            output_path = self.output_dir / "bgm.wav"
+            inputs = self.processor(
+                text=[prompt],
+                padding=True,
+                return_tensors="pt",
+            ).to(self.device)
+
+            torch.manual_seed(42)
+            with torch.inference_mode():
+                audio_values = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_tokens,
+                    do_sample=True,
+                    guidance_scale=3.0,
+                )
+
+            audio = audio_values[0, 0].cpu().float().numpy()
+            model_sr = self.model.config.audio_encoder.sampling_rate
+            actual_duration = len(audio) / model_sr
+            logger.info(f"Raw audio: {len(audio)} samples @ {model_sr}Hz "
+                        f"({actual_duration:.2f}s)")
+
+            if model_sr != self.target_sr:
+                import librosa
+                audio = librosa.resample(
+                    audio.astype(np.float32),
+                    orig_sr=model_sr,
+                    target_sr=self.target_sr,
+                )
+
+            # Stereo pad/trim
+            if len(audio.shape) == 1:
+                stereo = np.stack([audio, audio], axis=0)
+            else:
+                stereo = audio
+            target_samples = int(target_duration * self.target_sr)
+            if stereo.shape[-1] < target_samples:
+                pad = target_samples - stereo.shape[-1]
+                stereo = np.pad(stereo, ((0, 0), (0, pad)), mode="wrap")
+            else:
+                stereo = stereo[:, :target_samples]
+
+            stereo = stereo / (np.abs(stereo).max() + 1e-8) * 0.7
+
             import soundfile as sf
-            sf.write(str(output_path), audio.T.numpy(), self.sample_rate, subtype='PCM_16')
+            output_path = self.output_dir / "bgm.wav"
+            sf.write(str(output_path), stereo.T, self.target_sr, subtype="PCM_16")
 
-            actual_duration = audio.shape[-1] / self.sample_rate
             logger.info(f"BGM generated in {time.time() - start_time:.1f}s "
-                       f"({actual_duration:.2f}s, {self.sample_rate}Hz)")
+                        f"({stereo.shape[-1]/self.target_sr:.2f}s, {self.target_sr}Hz)")
             return output_path
+
         except Exception as e:
-            logger.error(f"Procedural BGM generation failed: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"BGM generation failed: {e}")
             return None
 
 

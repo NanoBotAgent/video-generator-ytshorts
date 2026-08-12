@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Caption Module - Caption generation with fallback timing.
+Caption Module - Moonshine Base (61M) for word-level transcription.
 Generates CapCut/TikTok-style .ass subtitle file with active-word highlighting.
+Uses AutoModelForSpeechSeq2Seq (requires transformers >= 4.49).
 """
 
 import os
@@ -11,7 +12,7 @@ import logging
 import time
 import wave
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
 import torch
 import numpy as np
@@ -25,71 +26,112 @@ logger = logging.getLogger(__name__)
 
 
 class CaptionGenerator:
-    """Caption generator with word-level timestamps for ASS generation."""
+    """Moonshine Base transcription with word-level timestamps for ASS generation."""
+
+    MODEL_ID = "UsefulSensors/moonshine-base"
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
         self.output_dir = output_dir
         self.device = torch.device("cpu")
+        self.model = None
+        self.processor = None
         self.sample_rate = 16000
 
     def load_model(self) -> bool:
-        """Try to load a caption model, fall back to simple timing."""
-        logger.info("Using fallback caption timing (Moonshine not supported in current transformers)")
-        return False
+        """Load Moonshine Base model via AutoModelForSpeechSeq2Seq."""
+        try:
+            logger.info(f"Loading {self.MODEL_ID} on CPU...")
+            start_time = time.time()
+
+            from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+
+            self.processor = AutoProcessor.from_pretrained(self.MODEL_ID)
+            self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                self.MODEL_ID,
+                torch_dtype=torch.float32,
+                low_cpu_mem_usage=True,
+            ).to(self.device)
+            self.model.eval()
+
+            logger.info(f"Caption model loaded in {time.time() - start_time:.1f}s")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load caption model: {e}")
+            return False
 
     def transcribe(self, audio_path: Path) -> List[Dict]:
-        """Transcribe audio with word-level timestamps using fallback timing."""
-        return self._fallback_transcribe(audio_path)
+        """Transcribe audio with estimated word-level timestamps."""
+        if self.model is None or self.processor is None:
+            if not self.load_model():
+                return []
 
-    def _fallback_transcribe(self, audio_path: Path) -> List[Dict]:
-        """Generate fallback word timings based on audio duration."""
         try:
-            with wave.open(str(audio_path), "rb") as wf:
-                frames = wf.getnframes()
-                rate = wf.getframerate()
-                duration = frames / float(rate)
-        except Exception:
-            duration = 30.0
+            logger.info("Transcribing audio for captions...")
+            start_time = time.time()
 
-        logger.info(f"Using fallback timing for {duration:.1f}s audio")
+            import soundfile as sf
+            audio, sr = sf.read(str(audio_path))
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
+            if sr != self.sample_rate:
+                import librosa
+                audio = librosa.resample(audio, orig_sr=sr, target_sr=self.sample_rate)
 
-        script_text = self.config.get("script_text", "")
-        words = script_text.split()
-        if not words:
-            words = ["Hello", "world", "this", "is", "a", "test"]
+            # Prepare inputs
+            inputs = self.processor(
+                audio,
+                sampling_rate=self.sample_rate,
+                return_tensors="pt",
+            ).to(self.device)
 
-        word_duration = duration / len(words)
-        result = []
-        current_time = 0.0
-        for word in words:
-            result.append({
-                "word": word,
-                "start": current_time,
-                "end": current_time + word_duration * 0.9,
-            })
-            current_time += word_duration
+            # Generate transcription
+            torch.manual_seed(42)
+            with torch.inference_mode():
+                generated_ids = self.model.generate(
+                    **inputs,
+                    max_new_tokens=448,  # ~6.5 tokens/sec * max audio length
+                    return_timestamps=False,
+                )
 
-        return result
+            transcription = self.processor.batch_decode(
+                generated_ids, skip_special_tokens=True
+            )[0].strip()
 
-    def _fallback_transcribe_from_text(self, text: str) -> List[Dict]:
-        """Generate fallback word timings from text."""
-        words = text.split()
-        if not words:
-            words = ["Hello", "world", "this", "is", "a", "test"]
+            logger.info(f"Transcription: {transcription[:100]}...")
 
-        word_duration = 0.5  # approximate
-        result = []
-        current_time = 0.0
-        for word in words:
-            result.append({
-                "word": word,
-                "start": current_time,
-                "end": current_time + word_duration * 0.9,
-            })
-            current_time += word_duration
+            # Moonshine doesn't provide word timestamps directly.
+            # We estimate them by aligning the transcript to the audio duration.
+            words = transcription.split()
+            if not words:
+                return []
 
-        return result
+            # Get audio duration
+            audio_duration = len(audio) / self.sample_rate
+
+            # Estimate word timings proportionally
+            total_chars = sum(len(w) for w in words) + len(words) - 1  # +spaces
+            words_with_times = []
+            current_time = 0.0
+
+            for i, word in enumerate(words):
+                word_duration = (len(word) / total_chars) * audio_duration * 0.9  # 90% for words, 10% gaps
+                gap = audio_duration * 0.1 / max(len(words), 1)
+
+                words_with_times.append({
+                    "word": word,
+                    "start": max(0.0, current_time),
+                    "end": min(audio_duration, current_time + word_duration),
+                })
+                current_time += word_duration + gap
+
+            logger.info(f"Transcription complete in {time.time() - start_time:.1f}s "
+                        f"({len(words_with_times)} words, {audio_duration:.2f}s audio)")
+            return words_with_times
+
+        except Exception as e:
+            logger.error(f"Transcription failed: {e}")
+            return []
 
     def generate_ass(self, words: List[Dict], video_width: int, video_height: int) -> Optional[Path]:
         """Generate CapCut/TikTok-style ASS subtitle file."""
@@ -131,7 +173,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 current_word = word["word"]
                 after_text = " ".join(w["word"] for w in words[i+1:])
 
-                line_text = f"{before_text} {{\\rHighlight}}{current_word}{{\\rDefault}} {after_text}".strip()
+                line_text = f"{before_text} {{\rHighlight}}{current_word}{{\rDefault}} {after_text}".strip()
 
                 events.append(
                     f"Dialogue: 0,{start_ms},{end_ms},Default,,0,0,0,,{line_text}"
@@ -147,8 +189,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         except Exception as e:
             logger.error(f"ASS generation failed: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
             return None
 
     def _format_ass_time(self, seconds: float) -> str:

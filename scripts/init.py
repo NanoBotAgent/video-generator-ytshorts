@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from huggingface_hub import snapshot_download, hf_hub_download
-from transformers import AutoModel, AutoTokenizer, AutoProcessor
+from huggingface_hub import snapshot_download
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor, AutoModelForSpeechSeq2Seq, MusicgenForConditionalGeneration
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,24 +29,21 @@ MODELS_TO_DOWNLOAD = {
         "repo_id": "stepfun-ai/Step-Audio-EditX",
         "revision": "main",
         "local_dir": MODEL_CACHE_DIR / "models--stepfun-ai--Step-Audio-EditX",
-        "required": True,
     },
     "bgm": {
-        "repo_id": "ACE-Step/Ace-Step1.5",
+        "repo_id": "facebook/musicgen-small",
         "revision": "main",
-        "local_dir": MODEL_CACHE_DIR / "models--ACE-Step--Ace-Step1.5",
-        "required": False,  # Optional - fallback available
+        "local_dir": MODEL_CACHE_DIR / "models--facebook--musicgen-small",
     },
     "captions": {
-        "repo_id": "usefulsensors/moonshine-base",
+        "repo_id": "UsefulSensors/moonshine-base",
         "revision": "main",
-        "local_dir": MODEL_CACHE_DIR / "models--usefulsensors--moonshine-base",
-        "required": True,
+        "local_dir": MODEL_CACHE_DIR / "models--UsefulSensors--moonshine-base",
     },
 }
 
 
-def check_disk_space(path: Path, required_gb: float = 15.0) -> bool:
+def check_disk_space(path: Path, required_gb: float = 20.0) -> bool:
     """Check if there's enough disk space for model downloads."""
     try:
         import shutil
@@ -78,8 +75,8 @@ def download_model(repo_id: str, revision: str, local_dir: Path) -> bool:
         return False
 
 
-def verify_model(repo_id: str, local_dir: Path) -> bool:
-    """Verify model files exist and are loadable."""
+def verify_model(local_dir: Path) -> bool:
+    """Verify model files exist."""
     try:
         if not local_dir.exists():
             return False
@@ -87,10 +84,10 @@ def verify_model(repo_id: str, local_dir: Path) -> bool:
         if not files:
             logger.warning(f"No model weights found in {local_dir}")
             return False
-        logger.info(f"Verified {repo_id}: {len(files)} weight/config files found")
+        logger.info(f"Verified {local_dir}: {len(files)} weight/config files found")
         return True
     except Exception as e:
-        logger.error(f"Verification failed for {repo_id}: {e}")
+        logger.error(f"Verification failed: {e}")
         return False
 
 
@@ -115,37 +112,26 @@ def main() -> int:
         return 1
 
     success_count = 0
-    required_failed = False
-    
     for name, config in MODELS_TO_DOWNLOAD.items():
         local_dir = Path(config["local_dir"])
-        is_required = config.get("required", True)
-        
-        if verify_model(config["repo_id"], local_dir):
+        if verify_model(local_dir):
             logger.info(f"Model {name} already cached, skipping download")
             success_count += 1
             continue
 
         if download_model(config["repo_id"], config["revision"], local_dir):
-            if verify_model(config["repo_id"], local_dir):
+            if verify_model(local_dir):
                 success_count += 1
             else:
                 logger.error(f"Model {name} downloaded but verification failed")
-                if is_required:
-                    required_failed = True
         else:
-            logger.warning(f"Model {name} download failed (optional: {not is_required})")
-            if is_required:
-                required_failed = True
+            logger.error(f"Model {name} download failed")
 
     logger.info("=" * 60)
     logger.info(f"Initialization complete: {success_count}/{len(MODELS_TO_DOWNLOAD)} models ready")
     logger.info("=" * 60)
 
-    if required_failed:
-        logger.error("Required model(s) failed to download")
-        return 1
-    return 0
+    return 0 if success_count == len(MODELS_TO_DOWNLOAD) else 1
 
 
 if __name__ == "__main__":

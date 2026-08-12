@@ -9,8 +9,8 @@
   "bgm_duration_buffer_seconds": 2,
   "output_dir": "output",
   "tts_model": "stepfun-ai/Step-Audio-EditX",
-  "bgm_model": "ACE-Step/ACE-Step-v1-5-4b-xl-turbo",
-  "caption_model": "usefulsensors/moonshine-base",
+  "bgm_model": "facebook/musicgen-small",
+  "caption_model": "UsefulSensors/moonshine-base",
   "timecut_viewport": "1080x1920",
   "ffmpeg_preset": "fast",
   "ffmpeg_crf": 22

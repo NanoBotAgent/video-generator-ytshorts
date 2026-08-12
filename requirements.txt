@@ -1,29 +1,24 @@
-# Core ML libraries
-transformers>=4.45.0
+# PyTorch CPU-only
+torch==2.4.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+torchvision==0.19.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+torchaudio==2.4.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Core ML libraries - transformers >= 4.49 for Moonshine support
+transformers>=4.49.0
 accelerate==0.33.0
 safetensors==0.4.4
 huggingface-hub==0.24.0
 
 # Audio processing
-librosa>=0.10.2
+librosa==0.10.2
 soundfile==0.12.1
 scipy==1.13.0
-numpy>=1.26.0,<2.0.0
-
-# Caption generation
-useful-moonshine==20241016
+numpy==1.26.0
 
 # TTS fallback
 pyttsx3==2.90
-
-# Tokenizer support
-sentencepiece
 
 # Utilities
 tqdm==4.66.0
 pyyaml==6.0.1
 requests==2.32.0
-protobuf==5.27.0
-
-# torchaudio (installed via PyTorch CPU index)
-torchaudio

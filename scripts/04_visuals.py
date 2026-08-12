@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Visuals Module - Generates MP4 video using ffmpeg (reliable in CI).
+Visuals Module - Renders procedural gradient video using ffmpeg lavfi.
 Generates 1080x1920 @ 60fps visuals.mp4 matching voiceover duration.
+Uses ffmpeg color/gradients filter - no Chromium/timecut needed (works on CPU CI).
 """
 
 import os
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class VisualsRenderer:
-    """Generates video using ffmpeg with animated gradients (reliable in CI)."""
+    """Renders procedural gradient video using ffmpeg."""
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
@@ -44,38 +45,40 @@ class VisualsRenderer:
             return 30.0
 
     def render(self, duration: float) -> Optional[Path]:
-        """Generate video using ffmpeg with animated gradient."""
+        """Render procedural gradient video using ffmpeg lavfi."""
         try:
-            logger.info(f"Generating visuals with ffmpeg: {self.width}x{self.height} @ {duration:.1f}s @ {self.fps}fps")
+            logger.info(f"Rendering visuals: {self.width}x{self.height} @ {duration:.1f}s @ {self.fps}fps")
             start_time = time.time()
 
             output_path = self.output_dir / "visuals.mp4"
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Generate a video with animated gradient using ffmpeg
-            # Using lavfi (libavfilter) for programmatic video generation
-            total_frames = int(duration * self.fps)
+            # Build ffmpeg lavfi filter graph for animated gradients
+            # Multiple gradient layers with animation
+            filter_complex = (
+                f"color=c=0x1a1a2e:size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f}[bg];"
+                f"gradients=size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f}:"
+                f"c0=0x16213e:c1=0x0f3460:c2=0xe94560:c3=0x533483:speed=0.1[grad1];"
+                f"gradients=size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f}:"
+                f"c0=0x0f0f23:c1=0x1a1a2e:c2=0x16213e:c3=0x0f3460:speed=0.05[grad2];"
+                f"[bg][grad1]blend=all_mode=overlay:all_opacity=0.3[tmp];"
+                f"[tmp][grad2]blend=all_mode=overlay:all_opacity=0.2[vout]"
+            )
 
             cmd = [
                 "ffmpeg", "-y",
-                "-f", "lavfi",
-                "-i", f"color=c=0x0a0a0f:size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f}",
-                "-f", "lavfi",
-                "-i", f"gradients=s={self.width}x{self.height}:c0=0x0064ff:c1=0x00ff88:c2=0xff3296:c3=0x12121a:duration={duration:.3f}:rate={self.fps}",
-                "-filter_complex",
-                "[1:v]format=rgba,loop=loop=-1:size=1,setpts=N/(FRAME_RATE*TB)[grad];"
-                "[0:v][grad]blend=all_mode='overlay':all_opacity=0.3[v]",
-                "-map", "[v]",
+                "-filter_complex", filter_complex,
+                "-map", "[vout]",
                 "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "23",
+                "-preset", self.config.get("ffmpeg_preset", "fast"),
+                "-crf", str(self.config.get("ffmpeg_crf", 22)),
                 "-pix_fmt", "yuv420p",
                 "-r", str(self.fps),
-                "-t", f"{duration:.3f}",
+                "-shortest",
                 str(output_path),
             ]
 
-            logger.info(f"Executing: {' '.join(cmd)}")
+            logger.info(f"Executing: {' '.join(cmd[:8])}... [filter_complex omitted]")
 
             result = subprocess.run(
                 cmd,
@@ -88,53 +91,54 @@ class VisualsRenderer:
             elapsed = time.time() - start_time
 
             if result.returncode != 0:
-                logger.warning(f"ffmpeg gradient failed (exit {result.returncode}): {result.stderr}")
-                # Fallback to simple solid color
-                return self._render_simple_fallback(duration, output_path, start_time)
+                logger.error(f"ffmpeg failed (exit {result.returncode}): {result.stderr[-2000:]}")
+                # Fallback: simple solid color with text
+                return self._render_fallback(duration)
 
             if not output_path.exists() or output_path.stat().st_size == 0:
                 logger.error("Output file not created or empty")
-                return None
+                return self._render_fallback(duration)
 
             file_size_mb = output_path.stat().st_size / (1024 * 1024)
-            logger.info(f"Visuals generated in {time.time() - start_time:.1f}s ({file_size_mb:.1f} MB)")
+            logger.info(f"Visuals rendered in {elapsed:.1f}s ({file_size_mb:.1f} MB)")
             return output_path
 
         except subprocess.TimeoutExpired:
             logger.error("ffmpeg timed out after 10 minutes")
-            return None
+            return self._render_fallback(duration)
         except Exception as e:
-            logger.error(f"Visuals generation failed: {e}")
-            return self._render_simple_fallback(duration, output_path, start_time)
+            logger.error(f"Visuals rendering failed: {e}")
+            return self._render_fallback(duration)
 
-    def _render_simple_fallback(self, duration: float, output_path: Path, start_time: float) -> Optional[Path]:
-        """Simple fallback: solid color video with timecode."""
+    def _render_fallback(self, duration: float) -> Optional[Path]:
+        """Fallback: simple color with drawtext."""
         try:
-            logger.info("Generating simple fallback visuals...")
+            logger.info("Rendering fallback visuals...")
+            output_path = self.output_dir / "visuals.mp4"
+
             cmd = [
                 "ffmpeg", "-y",
                 "-f", "lavfi",
-                "-i", f"color=c=0x12121a:size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f}",
-                "-vf", f"drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=48:text='VIDEO-GEN PIPELINE':x=(w-text_w)/2:y=(h-text_h)/2,drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:fontcolor=0x00ff88:fontsize=24:text='CPU-Only | Zero GPU | GitHub Actions':x=(w-text_w)/2:y=(h-text_h)/2+80",
+                "-i", f"color=c=0x1a1a2e:size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f}",
+                "-vf", (
+                    f"drawtext=text='VIDEO-GEN PIPELINE':fontcolor=white:fontsize=48:"
+                    f"x=(w-text_w)/2:y=(h-text_h)/2:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+                ),
                 "-c:v", "libx264",
                 "-preset", "fast",
-                "-crf", "23",
+                "-crf", "22",
                 "-pix_fmt", "yuv420p",
                 "-r", str(self.fps),
-                "-t", f"{duration:.3f}",
                 str(output_path),
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            if result.returncode != 0:
-                logger.error(f"Fallback ffmpeg failed: {result.stderr}")
-                return None
-
-            file_size_mb = output_path.stat().st_size / (1024 * 1024)
-            logger.info(f"Fallback visuals generated in {time.time() - start_time:.1f}s ({file_size_mb:.1f} MB)")
-            return output_path
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode == 0 and output_path.exists():
+                logger.info(f"Fallback visuals rendered: {output_path}")
+                return output_path
+            return None
         except Exception as e:
-            logger.error(f"Fallback visuals failed: {e}")
+            logger.error(f"Fallback rendering failed: {e}")
             return None
 
 
@@ -163,7 +167,7 @@ def main() -> int:
         logger.info(f"SUCCESS: Visuals saved to {result}")
         return 0
     else:
-        logger.error("Visuals generation failed")
+        logger.error("Visuals rendering failed")
         return 1
 
 
