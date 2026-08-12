@@ -44,13 +44,6 @@ jobs:
           cache: 'pip'
           cache-dependency-path: requirements.txt
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: package.json
-
       - name: Install system dependencies
         run: |
           sudo apt-get update -y
@@ -82,11 +75,6 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install --no-cache-dir -r requirements.txt
           pip list | grep -E "(torch|transformers|musicgen|moonshine|librosa|soundfile|pyttsx3)"
-
-      - name: Install Node dependencies (for timecut if needed locally)
-        run: |
-          npm ci --prefer-offline --no-audit --no-fund
-          npm list timecut
 
       - name: Initialize models
         run: |
