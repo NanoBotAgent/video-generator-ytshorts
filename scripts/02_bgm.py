@@ -91,14 +91,18 @@ class BGMGenerator:
             envelope[target_samples//2:] = torch.linspace(0.7, 0.3, target_samples//2)
             audio *= envelope
             
-            # Apply gentle low-pass filter effect by smoothing
+            # Apply gentle low-pass filter effect by smoothing (per channel)
             kernel_size = 5
             kernel = torch.ones(kernel_size) / kernel_size
-            audio = torch.nn.functional.conv1d(
-                audio.unsqueeze(0), 
-                kernel.unsqueeze(0).unsqueeze(0), 
-                padding=kernel_size//2
-            ).squeeze(0)
+            # Process each channel separately
+            audio_filtered = torch.zeros_like(audio)
+            for ch in range(2):
+                audio_filtered[ch] = torch.nn.functional.conv1d(
+                    audio[ch].unsqueeze(0).unsqueeze(0), 
+                    kernel.unsqueeze(0).unsqueeze(0), 
+                    padding=kernel_size//2
+                ).squeeze(0).squeeze(0)
+            audio = audio_filtered
             
             audio = audio / (audio.abs().max() + 1e-8)
 
