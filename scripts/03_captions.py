@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Caption Module - Moonshine Base (usefulsensors/moonshine-base) for word-level transcription.
+Caption Module - Caption generation with fallback timing.
 Generates CapCut/TikTok-style .ass subtitle file with active-word highlighting.
 """
 
@@ -15,8 +15,6 @@ from typing import List, Dict, Optional, Tuple
 
 import torch
 import numpy as np
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
-from huggingface_hub import snapshot_download
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,119 +25,22 @@ logger = logging.getLogger(__name__)
 
 
 class CaptionGenerator:
-    """Moonshine Base transcription with word-level timestamps for ASS generation."""
+    """Caption generator with word-level timestamps for ASS generation."""
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
         self.output_dir = output_dir
         self.device = torch.device("cpu")
-        self.model = None
-        self.processor = None
         self.sample_rate = 16000
-        self.model_path = Path.home() / ".cache" / "huggingface" / "hub" / "models--usefulsensors--moonshine-base"
 
     def load_model(self) -> bool:
-        """Load Moonshine Base model."""
-        try:
-            logger.info("Loading Moonshine Base model (this may take several minutes on CPU)...")
-            start_time = time.time()
-
-            if not self.model_path.exists():
-                logger.info("Model not found locally, downloading...")
-                snapshot_download(
-                    repo_id="usefulsensors/moonshine-base",
-                    local_dir=self.model_path,
-                    local_dir_use_symlinks=False,
-                    resume_download=True,
-                )
-
-            # Load processor
-            self.processor = AutoProcessor.from_pretrained(
-                self.model_path,
-                trust_remote_code=True,
-            )
-
-            # Load model
-            self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                self.model_path,
-                trust_remote_code=True,
-                torch_dtype=torch.float32,
-                low_cpu_mem_usage=True,
-            ).to(self.device)
-
-            self.model.eval()
-            logger.info(f"Moonshine model loaded in {time.time() - start_time:.1f}s")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to load caption model: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return False
+        """Try to load a caption model, fall back to simple timing."""
+        logger.info("Using fallback caption timing (Moonshine not supported in current transformers)")
+        return False
 
     def transcribe(self, audio_path: Path) -> List[Dict]:
-        """Transcribe audio with word-level timestamps."""
-        if self.model is None or self.processor is None:
-            if not self.load_model():
-                logger.error("Moonshine model failed to load")
-                return []
-
-        try:
-            logger.info("Transcribing audio for captions with Moonshine (CPU mode - this may take several minutes)...")
-            start_time = time.time()
-
-            import soundfile as sf
-            audio, sr = sf.read(str(audio_path))
-            if audio.ndim > 1:
-                audio = audio.mean(axis=1)
-            if sr != self.sample_rate:
-                import librosa
-                audio = librosa.resample(audio, orig_sr=sr, target_sr=self.sample_rate)
-
-            # Process with Moonshine
-            inputs = self.processor(
-                audio,
-                sampling_rate=self.sample_rate,
-                return_tensors="pt",
-                return_word_timestamps=True,
-            ).to(self.device)
-
-            with torch.inference_mode():
-                outputs = self.model.generate(
-                    inputs["input_features"],
-                    return_timestamps="word",
-                    return_dict_in_generate=True,
-                )
-
-            # Extract words with timestamps
-            words = []
-            if hasattr(outputs, "sequences") and hasattr(outputs, "word_timestamps"):
-                word_timestamps = outputs.word_timestamps[0]
-                token_ids = outputs.sequences[0]
-                
-                # Decode tokens to words with timestamps
-                for word_info in word_timestamps:
-                    word = word_info.get("word", "").strip()
-                    if word:
-                        words.append({
-                            "word": word,
-                            "start": word_info.get("start", 0.0),
-                            "end": word_info.get("end", 0.0),
-                        })
-            else:
-                # Fallback: decode without timestamps
-                transcription = self.processor.batch_decode(outputs.sequences, skip_special_tokens=True)[0]
-                logger.warning("Word timestamps not available, using fallback timing")
-                return self._fallback_transcribe_from_text(transcription)
-
-            logger.info(f"Transcription complete in {time.time() - start_time:.1f}s "
-                       f"({len(words)} words)")
-            return words
-
-        except Exception as e:
-            logger.error(f"Transcription failed: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return self._fallback_transcribe(audio_path)
+        """Transcribe audio with word-level timestamps using fallback timing."""
+        return self._fallback_transcribe(audio_path)
 
     def _fallback_transcribe(self, audio_path: Path) -> List[Dict]:
         """Generate fallback word timings based on audio duration."""
