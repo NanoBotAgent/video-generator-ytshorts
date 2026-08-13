@@ -4,11 +4,13 @@ A fully automated, open-source short-form vertical video generator designed to r
 
 ## Features
 
-- **TTS**: Step Audio EditX (3B Q8 quantized) with zero-shot voice cloning and paralinguistic tags (`[sigh]`, `[laugh]`, `[chuckle]`)
-- **BGM**: ACE-Step 1.5 4B XL-Turbo (Q8, 8-step turbo distillation) for ambient background music
-- **Captions**: UsefulSensors Moonshine Base (61M) for millisecond-exact word timestamps → CapCut/TikTok-style `.ass` subtitles
-- **Visuals**: 1080x1920 @ 60fps dark-mode tech UI rendered via `timecut` (Chromium frame capture)
+- **TTS**: pyttsx3 (system TTS engine, `espeak-ng` backend) - deterministic, CPU-native voiceover generation
+- **BGM**: Facebook MusicGen-Small (300M) for ambient background music, matched to voiceover duration
+- **Captions**: UsefulSensors Moonshine Base (61M) for word-level transcription → CapCut/TikTok-style `.ass` subtitles
+- **Visuals**: 1080x1920 @ 60fps animated gradient background rendered with FFmpeg lavfi filter graph (no browser/Chromium needed)
 - **Assembly**: FFmpeg merge with sidechain auto-ducking (BGM → 15% during speech) + burned subtitles
+
+> **Why not Step-Audio-EditX / ACE-Step 1.5 XL?** Those were the original targets for TTS and BGM, but both require a GPU with 12GB+ VRAM (Step-Audio-EditX also needs a separate CosyVoice vocoder pipeline that is not bundled with the model weights). Neither runs meaningfully on a free CPU-only GitHub Actions runner, so this pipeline uses the CPU-viable substitutes above. If you want the original models, you would need to point this pipeline at a GPU-backed runner (e.g. a self-hosted runner, or offload just those two steps to a service like an HF Space with ZeroGPU).
 
 ## Quick Start
 
@@ -22,11 +24,7 @@ cd video-generator-ytshorts
 # Install Python dependencies (CPU-only PyTorch)
 pip install -r requirements.txt
 
-# Install Node dependencies (timecut, playwright)
-npm ci
-npx playwright install chromium --with-deps
-
-# Initialize models (downloads ~12GB weights)
+# Initialize models (downloads ~2GB weights: MusicGen-Small + Moonshine Base)
 python scripts/init.py
 
 # Configure your script
@@ -49,7 +47,7 @@ Edit `config.json`:
 
 ```json
 {
-  "script_text": "Your voiceover script. [sigh] Add paralinguistic tags. [laugh]",
+  "script_text": "Your voiceover script. [sigh] Paralinguistic tags are stripped before TTS. [laugh]",
   "bgm_prompt": "Ambient electronic, subtle tech atmosphere, minimal synth pads, slow tempo",
   "video_width": 1080,
   "video_height": 1920,
@@ -58,35 +56,37 @@ Edit `config.json`:
 }
 ```
 
+Note: `[sigh]`, `[laugh]`, etc. in `script_text` are stripped (not voiced) since pyttsx3 has no equivalent for them - they are just kept as writing hints for now.
+
 ## Pipeline Architecture
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
 │  config.json│────▶│  01_tts.py  │────▶│ voiceover.wav│
-└─────────────┘     └─────────────┘     └──────┬──────┘
+└─────────────┘     └─────────────┘     └──────┐──────┘
                                                │
 ┌─────────────┐     ┌─────────────┐            │
-│  02_bgm.py  │────▶│   bgm.wav   │◀───────────┘ (duration match)
+│  02_bgm.py  │────▶│   bgm.wav   │◀─────────┘ (duration match)
 └─────────────┘     └─────────────┘
                                                │
 ┌─────────────┐     ┌─────────────┐            │
-│03_captions.py│────▶│ captions.ass│◀───────────┘ (transcription)
+│03_captions.py│────▶│ captions.ass│◀─────────┘ (transcription)
 └─────────────┘     └─────────────┘
                                                │
 ┌─────────────┐     ┌─────────────┐            │
-│04_visuals.py│────▶│ visuals.mp4 │◀───────────┘ (duration match)
+│04_visuals.py│────▶│ visuals.mp4 │◀─────────┘ (duration match)
 └─────────────┘     └─────────────┘
                            │
                            ▼
-                  ┌─────────────────┐
+                  ┌───────────────┐
                   │ 05_assembly.py  │
                   │   (FFmpeg)      │
-                  └────────┬────────┘
+                  └────────┄────────┘
                            │
                            ▼
-                  ┌─────────────────┐
+                  ┌───────────────┐
                   │ final_video.mp4 │
-                  └─────────────────┘
+                  └───────────────┘
 ```
 
 ## Output Structure
@@ -103,25 +103,26 @@ output/
 ## Requirements
 
 - **Python**: 3.10+ (tested on 3.10, 3.11)
-- **Node.js**: 20+ (for timecut/playwright)
-- **System**: ffmpeg, libass-dev, fontconfig
-- **RAM**: <12 GB peak (fits in GHA 16 GB runner)
-- **Disk**: ~15 GB for model weights (cached across runs)
+- **System**: ffmpeg, libass-dev, fontconfig, espeak-ng (for pyttsx3)
+- **RAM**: <8 GB peak (fits comfortably in GHA 16 GB runner)
+- **Disk**: ~3 GB for model weights (cached across runs)
 
 ## Model Weights (Auto-Downloaded)
 
-| Component | Model | Size | Quantization |
-|-----------|-------|------|--------------|
-| TTS | Step Audio EditX | ~6 GB | Q8 (3B params) |
-| BGM | ACE-Step XL-Turbo | ~8 GB | Q8 (4B params) |
-| Captions | Moonshine Base | ~120 MB | FP16 (61M params) |
+| Component | Model | Size | Notes |
+|-----------|-------|------|-------|
+| TTS | pyttsx3 (espeak-ng) | N/A | No model download - system TTS engine |
+| BGM | MusicGen-Small | ~2 GB | FP32 (300M params) |
+| Captions | Moonshine Base | ~120 MB | FP32 (61M params) |
 
 Models are cached in `~/.cache/huggingface/` and persist across GitHub Actions runs via cache action.
 
 ## Customization
 
-### Visual Template
-Edit `templates/index.html` and `templates/styles.css` for custom branding, colors, animations.
+### Visual Style
+Visuals are procedural animated gradients generated directly by an FFmpeg `lavfi` filter graph in `scripts/04_visuals.py` (colors, blend modes, speed). Edit the `filter_complex` string there to change the look.
+
+> The `templates/index.html` and `templates/styles.css` files are leftover from an earlier Chromium/timecut-based renderer and are no longer used by the pipeline. Safe to ignore or delete.
 
 ### Audio Processing
 Modify `scripts/05_assembly.py` filter graph for different ducking ratios, compression settings, or audio effects.
@@ -135,16 +136,15 @@ The workflow (`.github/workflows/generate_video.yml`):
 - Triggers on `push` to main, `workflow_dispatch`, and daily schedule
 - Uses `ubuntu-latest` (4 vCPU, 16 GB RAM)
 - Caches pip and Hugging Face directories
-- Installs FFmpeg, libass, fonts, Chromium
+- Installs FFmpeg, libass, fonts, espeak-ng
 - Runs full pipeline with 60-minute timeout
 - Uploads `final_video.mp4` as downloadable artifact
 
 ## Memory Optimization
 
 - PyTorch CPU threads limited to 4 (OMP/MKL)
-- Models loaded with `low_cpu_mem_usage=True` and `torch.float16`
+- Models loaded with `low_cpu_mem_usage=True` and `torch.float32`
 - `torch.inference_mode()` for all forward passes
-- Explicit `del` and `torch.cuda.empty_cache()` (no-op on CPU) between steps
 - Sequential execution (no parallel model loading)
 
 ## Troubleshooting
@@ -153,11 +153,6 @@ The workflow (`.github/workflows/generate_video.yml`):
 - Reduce `fps` in config (30fps halves visual render memory)
 - Lower `ffmpeg_crf` to 28 for faster encoding
 - Ensure no other heavy processes running
-
-### Timecut/Chromium Issues
-- Verify `npx playwright install chromium --with-deps` ran
-- Check `--viewport` matches config dimensions
-- Increase timeout in `04_visuals.py` if render hangs
 
 ### Model Download Failures
 - Check disk space (`df -h`)
@@ -170,7 +165,6 @@ MIT License - See LICENSE file for details.
 
 ## Acknowledgments
 
-- [Step Audio EditX](https://huggingface.co/stepfun-ai/Step-Audio-EditX) by StepFun
-- [ACE-Step](https://huggingface.co/ACE-Step) by ACE-Step Team
+- [MusicGen](https://huggingface.co/facebook/musicgen-small) by Meta/Facebook
 - [Moonshine](https://github.com/usefulsensors/moonshine) by UsefulSensors
-- [timecut](https://github.com/Timecut/timecut) for Chromium frame capture
+- [pyttsx3](https://github.com/nateshmbhat/pyttsx3) for offline TTS
