@@ -1,13 +1,18 @@
-# PyTorch CPU-only (use extra index URL for CPU wheels)
-torch==2.4.0 --extra-index-url https://download.pytorch.org/whl/cpu
-torchvision==0.19.0 --extra-index-url https://download.pytorch.org/whl/cpu
-torchaudio==2.4.0 --extra-index-url https://download.pytorch.org/whl/cpu
+# PyTorch CPU-only wheels (must use --extra-index-url as a global option + explicit +cpu
+# version tags, otherwise pip silently resolves the default CUDA build from PyPI, which
+# pulls in ~1.7GB of unused nvidia-*-cu12 packages on a CPU-only runner)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.4.0+cpu
+torchvision==0.19.0+cpu
+torchaudio==2.4.0+cpu
 
 # Core ML libraries - transformers 4.49+ for Moonshine support
+# huggingface-hub must be >=0.26.0 for transformers==4.49.0 (was pinned to 0.24.0, which
+# caused a hard ResolutionImpossible failure in CI)
 transformers==4.49.0
 accelerate==0.33.0
 safetensors==0.4.4
-huggingface-hub==0.24.0
+huggingface-hub==0.26.2
 
 # Audio processing
 librosa==0.10.2
@@ -15,7 +20,7 @@ soundfile==0.12.1
 scipy==1.13.0
 numpy==1.26.0
 
-# TTS fallback
+# TTS (CPU-viable local voice, see README for why Step-Audio-EditX isn't used here)
 pyttsx3==2.90
 
 # Utilities
