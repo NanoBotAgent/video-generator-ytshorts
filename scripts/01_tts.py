@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """
-TTS Module - Step-Audio-EditX (3B) for voiceover generation.
-Generates voiceover.wav with zero-shot voice cloning and paralinguistic tag support.
-Runs on CPU using the model's built-in CPU fallback path.
+TTS Module - CPU-only voiceover generation via pyttsx3.
+
+NOTE: The original plan called for stepfun-ai/Step-Audio-EditX (3B) for zero-shot voice
+cloning with paralinguistic tags. That model requires a GPU with 12GB+ VRAM and a separate
+CosyVoice vocoder pipeline (it outputs semantic tokens, not audio) - neither is available
+on free GitHub Actions CPU runners. Loading the 3B model just to discard its output and
+fall back anyway was wasting ~6GB of downloads and CPU time on every run, so this module
+goes straight to pyttsx3: a lightweight, deterministic, CPU-native TTS engine.
+Paralinguistic tags like [sigh] are stripped since pyttsx3 has no equivalent for them.
 """
 
 import os
 import sys
 import json
 import logging
+import re
 import time
 import wave
 from pathlib import Path
 from typing import Optional
-
-import torch
-import torchaudio
-import numpy as np
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from huggingface_hub import snapshot_download
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,141 +28,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+PARALINGUISTIC_TAG_PATTERN = re.compile(
+    r"\[(sigh|laugh|chuckle|cough|breath|inhale|exhale|clears throat|snort|giggle)\]",
+    re.IGNORECASE,
+)
+
 
 class TTSGenerator:
-    """Step-Audio-EditX TTS generator with CPU support."""
-
-    MODEL_ID = "stepfun-ai/Step-Audio-EditX"
+    """pyttsx3-based CPU voiceover generator."""
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
         self.output_dir = output_dir
-        self.device = torch.device("cpu")
-        self.model = None
-        self.tokenizer = None
         self.sample_rate = config.get("voiceover_sample_rate", 44100)
-        self.model_path = Path.home() / ".cache" / "huggingface" / "hub" / "models--stepfun-ai--Step-Audio-EditX"
 
-    def load_model(self) -> bool:
-        """Load Step-Audio-EditX model with trust_remote_code for CPU inference."""
-        try:
-            logger.info(f"Loading {self.MODEL_ID} on CPU...")
-            start_time = time.time()
-
-            if not self.model_path.exists():
-                logger.info("Model not found locally, downloading...")
-                snapshot_download(
-                    repo_id=self.MODEL_ID,
-                    local_dir=self.model_path,
-                    local_dir_use_symlinks=False,
-                    resume_download=True,
-                )
-
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_path,
-                trust_remote_code=True,
-                padding_side="left",
-            )
-
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_path,
-                trust_remote_code=True,
-                torch_dtype=torch.float32,
-                low_cpu_mem_usage=True,
-            ).to(self.device)
-            self.model.eval()
-
-            logger.info(f"Model loaded in {time.time() - start_time:.1f}s")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to load TTS model: {e}")
-            return False
-
-    def process_paralinguistic_tags(self, text: str) -> str:
-        """Convert paralinguistic tags to Step-Audio-EditX format."""
-        tag_map = {
-            "[sigh]": "<|sigh|>",
-            "[laugh]": "<|laugh|>",
-            "[chuckle]": "<|chuckle|>",
-            "[cough]": "<|cough|>",
-            "[breath]": "<|breath|>",
-            "[inhale]": "<|inhale|>",
-            "[exhale]": "<|exhale|>",
-            "[clears throat]": "<|clears throat|>",
-            "[snort]": "<|snort|>",
-            "[giggle]": "<|giggle|>",
-        }
-        processed = text
-        for tag, token in tag_map.items():
-            processed = processed.replace(tag, token)
-        return processed
+    def strip_paralinguistic_tags(self, text: str) -> str:
+        """Remove paralinguistic tags (e.g. [sigh]) - pyttsx3 has no equivalent for them."""
+        cleaned = PARALINGUISTIC_TAG_PATTERN.sub("", text)
+        return re.sub(r"\s{2,}", " ", cleaned).strip()
 
     def generate(self, text: str) -> Optional[Path]:
-        """Generate voiceover audio from text."""
-        if self.model is None or self.tokenizer is None:
-            if not self.load_model():
-                logger.error("Model failed to load")
-                return None
-
+        """Generate voiceover audio from text using pyttsx3."""
         try:
-            logger.info("Generating voiceover with Step-Audio-EditX...")
+            logger.info("Generating voiceover with pyttsx3...")
             start_time = time.time()
 
-            processed_text = self.process_paralinguistic_tags(text)
-            logger.info(f"Processed text: {processed_text[:100]}...")
-
-            # Build chat format as expected by the model
-            messages = [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": processed_text},
-            ]
-
-            # Apply chat template
-            prompt = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-
-            inputs = self.tokenizer(
-                prompt,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=2048,
-            ).to(self.device)
-
-            torch.manual_seed(555)
-            with torch.inference_mode():
-                output_ids = self.model.generate(
-                    **inputs,
-                    do_sample=True,
-                    temperature=0.7,
-                    top_p=0.9,
-                    max_new_tokens=2048,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                )
-
-            # Decode only the new tokens
-            new_tokens = output_ids[0][inputs.input_ids.shape[1]:]
-            # The model outputs audio tokens - need to pass through vocoder
-            # For now, save the token IDs and use a simple approach
-            # Step-Audio-EditX generates semantic tokens that need CosyVoice vocoder
-            logger.warning("Step-Audio-EditX outputs semantic tokens requiring CosyVoice vocoder")
-            logger.warning("Falling back to pyttsx3 for actual waveform generation")
-
-            return self._generate_fallback(text)
-
-        except Exception as e:
-            logger.error(f"TTS generation failed: {e}")
-            return self._generate_fallback(text)
-
-    def _generate_fallback(self, text: str) -> Optional[Path]:
-        """Generate voiceover using pyttsx3 as fallback."""
-        try:
-            logger.info("Generating voiceover with pyttsx3 fallback...")
-            start_time = time.time()
+            clean_text = self.strip_paralinguistic_tags(text)
+            logger.info(f"Text (tags stripped): {clean_text[:100]}...")
 
             import pyttsx3
             engine = pyttsx3.init()
@@ -169,7 +62,7 @@ class TTSGenerator:
             engine.setProperty('volume', 1.0)
 
             output_path = self.output_dir / "voiceover.wav"
-            engine.save_to_file(text, str(output_path))
+            engine.save_to_file(clean_text, str(output_path))
             engine.runAndWait()
 
             import soundfile as sf
@@ -180,10 +73,11 @@ class TTSGenerator:
                 sf.write(str(output_path), audio, self.sample_rate, subtype='PCM_16')
 
             duration = len(audio) / self.sample_rate
-            logger.info(f"Fallback TTS generated in {time.time() - start_time:.1f}s ({duration:.2f}s)")
+            logger.info(f"Voiceover generated in {time.time() - start_time:.1f}s ({duration:.2f}s audio)")
             return output_path
+
         except Exception as e:
-            logger.error(f"Fallback TTS failed: {e}")
+            logger.error(f"TTS generation failed: {e}")
             return None
 
 
