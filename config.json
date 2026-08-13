@@ -1,5 +1,5 @@
 {
-  "script_text": "Welcome to the future of AI video generation. [sigh] Today we're building a fully automated pipeline that runs entirely on CPU. [chuckle] No expensive GPUs required. [laugh] Just pure optimization and clever engineering.",
+  "script_text": "Welcome to the future of AI video generation. [sigh] Today we are building a fully automated pipeline that runs entirely on CPU. [chuckle] No expensive GPUs required. [laugh] Just pure optimization and clever engineering.",
   "bgm_prompt": "Ambient electronic background music, subtle tech atmosphere, minimal synth pads, slow tempo, calm and professional mood, no drums, seamless loop",
   "video_width": 1080,
   "video_height": 1920,
@@ -8,10 +8,9 @@
   "voiceover_sample_rate": 44100,
   "bgm_duration_buffer_seconds": 2,
   "output_dir": "output",
-  "tts_model": "stepfun-ai/Step-Audio-EditX",
+  "tts_model": "pyttsx3",
   "bgm_model": "facebook/musicgen-small",
   "caption_model": "UsefulSensors/moonshine-base",
-  "timecut_viewport": "1080x1920",
   "ffmpeg_preset": "fast",
   "ffmpeg_crf": 22
 }
