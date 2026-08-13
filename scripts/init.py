@@ -2,17 +2,20 @@
 """
 Initialization script for video generation pipeline.
 Downloads and caches all required models to avoid repeated downloads in CI.
+
+NOTE: Step-Audio-EditX (originally planned for TTS) is no longer downloaded here - it
+requires a GPU with 12GB+ VRAM and a separate vocoder pipeline unavailable on free GitHub
+Actions CPU runners. TTS uses pyttsx3 instead, which needs no model download. See
+scripts/01_tts.py and the README for details.
 """
 
 import os
 import sys
 import logging
 from pathlib import Path
-from typing import Optional
 
 import torch
 from huggingface_hub import snapshot_download
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor, AutoModelForSpeechSeq2Seq, MusicgenForConditionalGeneration
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,11 +28,6 @@ MODEL_CACHE_DIR = Path.home() / ".cache" / "huggingface" / "hub"
 MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 MODELS_TO_DOWNLOAD = {
-    "tts": {
-        "repo_id": "stepfun-ai/Step-Audio-EditX",
-        "revision": "main",
-        "local_dir": MODEL_CACHE_DIR / "models--stepfun-ai--Step-Audio-EditX",
-    },
     "bgm": {
         "repo_id": "facebook/musicgen-small",
         "revision": "main",
