@@ -2,18 +2,5 @@
   "name": "video-generator-ytshorts",
   "version": "1.0.0",
   "description": "Automated CPU-only vertical video generation pipeline",
-  "private": true,
-  "scripts": {
-    "install:chromium": "npx playwright install chromium --with-deps",
-    "timecut": "timecut"
-  },
-  "dependencies": {
-    "timecut": "^1.0.0"
-  },
-  "devDependencies": {
-    "playwright": "^1.48.0"
-  },
-  "engines": {
-    "node": ">=20.0.0"
-  }
+  "private": true
 }
