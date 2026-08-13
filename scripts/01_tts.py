@@ -61,9 +61,15 @@ class TTSGenerator:
             engine.setProperty('rate', 180)
             engine.setProperty('volume', 1.0)
 
-            output_path = self.output_dir / "voiceover.wav"
+            # pyttsx3's espeak driver on Linux fails with a relative path
+            # ("Error opening '...': System error.") - it must be absolute.
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = (self.output_dir / "voiceover.wav").resolve()
             engine.save_to_file(clean_text, str(output_path))
             engine.runAndWait()
+
+            if not output_path.exists() or output_path.stat().st_size == 0:
+                raise RuntimeError(f"pyttsx3 did not produce a valid file at {output_path}")
 
             import soundfile as sf
             audio, sr = sf.read(str(output_path))
