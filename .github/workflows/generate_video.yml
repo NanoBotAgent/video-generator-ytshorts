@@ -18,7 +18,6 @@ on:
 
 env:
   PYTHON_VERSION: '3.10'
-  NODE_VERSION: '20'
   PIP_CACHE_DIR: ~/.cache/pip
   HF_HOME: ~/.cache/huggingface
 
@@ -139,7 +138,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          if [ -f output/voiceover.wav ]; then echo "| TTS (Step-Audio-EditX) | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| TTS (Step-Audio-EditX) | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          if [ -f output/voiceover.wav ]; then echo "| TTS (pyttsx3) | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| TTS (pyttsx3) | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
           if [ -f output/bgm.wav ]; then echo "| BGM (MusicGen-Small) | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| BGM (MusicGen-Small) | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
           if [ -f output/captions.ass ]; then echo "| Captions (Moonshine) | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| Captions (Moonshine) | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
           if [ -f output/visuals.mp4 ]; then echo "| Visuals (ffmpeg lavfi) | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| Visuals (ffmpeg lavfi) | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
