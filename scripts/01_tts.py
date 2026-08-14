@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-TTS Module - CPU-only voiceover generation via pyttsx3.
+TTS Module - CPU-only voiceover generation via the espeak-ng CLI.
 
 NOTE: The original plan called for stepfun-ai/Step-Audio-EditX (3B) for zero-shot voice
 cloning with paralinguistic tags. That model requires a GPU with 12GB+ VRAM and a separate
 CosyVoice vocoder pipeline (it outputs semantic tokens, not audio) - neither is available
-on free GitHub Actions CPU runners. Loading the 3B model just to discard its output and
-fall back anyway was wasting ~6GB of downloads and CPU time on every run, so this module
-goes straight to pyttsx3: a lightweight, deterministic, CPU-native TTS engine.
-Paralinguistic tags like [sigh] are stripped since pyttsx3 has no equivalent for them.
+on free GitHub Actions CPU runners. This module previously used the pyttsx3 library, but
+its espeak driver relies on a ctypes callback loop that is known to silently fail (no
+error, no output file) in headless CI/Docker environments - see e.g.
+github.com/nateshmbhat/pyttsx3/issues/151. Calling the espeak-ng binary directly avoids
+that whole class of failure: it's a synchronous subprocess with a real exit code.
+Paralinguistic tags like [sigh] are stripped since espeak-ng has no equivalent for them.
 """
 
 import os
@@ -16,6 +18,8 @@ import sys
 import json
 import logging
 import re
+import subprocess
+import tempfile
 import time
 import wave
 from pathlib import Path
@@ -35,7 +39,7 @@ PARALINGUISTIC_TAG_PATTERN = re.compile(
 
 
 class TTSGenerator:
-    """pyttsx3-based CPU voiceover generator."""
+    """espeak-ng CLI-based CPU voiceover generator."""
 
     def __init__(self, config: dict, output_dir: Path):
         self.config = config
@@ -43,33 +47,51 @@ class TTSGenerator:
         self.sample_rate = config.get("voiceover_sample_rate", 44100)
 
     def strip_paralinguistic_tags(self, text: str) -> str:
-        """Remove paralinguistic tags (e.g. [sigh]) - pyttsx3 has no equivalent for them."""
+        """Remove paralinguistic tags (e.g. [sigh]) - espeak-ng has no equivalent for them."""
         cleaned = PARALINGUISTIC_TAG_PATTERN.sub("", text)
         return re.sub(r"\s{2,}", " ", cleaned).strip()
 
     def generate(self, text: str) -> Optional[Path]:
-        """Generate voiceover audio from text using pyttsx3."""
+        """Generate voiceover audio from text using the espeak-ng CLI."""
         try:
-            logger.info("Generating voiceover with pyttsx3...")
+            logger.info("Generating voiceover with espeak-ng...")
             start_time = time.time()
 
             clean_text = self.strip_paralinguistic_tags(text)
             logger.info(f"Text (tags stripped): {clean_text[:100]}...")
 
-            import pyttsx3
-            engine = pyttsx3.init()
-            engine.setProperty('rate', 180)
-            engine.setProperty('volume', 1.0)
-
-            # pyttsx3's espeak driver on Linux fails with a relative path
-            # ("Error opening '...': System error.") - it must be absolute.
             self.output_dir.mkdir(parents=True, exist_ok=True)
             output_path = (self.output_dir / "voiceover.wav").resolve()
-            engine.save_to_file(clean_text, str(output_path))
-            engine.runAndWait()
+
+            # Write text to a temp file and use -f so arbitrary punctuation/quotes/unicode
+            # never has to survive shell/argv escaping.
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False, encoding="utf-8"
+            ) as tf:
+                tf.write(clean_text)
+                text_file = tf.name
+
+            try:
+                result = subprocess.run(
+                    [
+                        "espeak-ng",
+                        "-s", "170",       # words per minute
+                        "-v", "en-us",
+                        "-f", text_file,
+                        "-w", str(output_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+            finally:
+                os.unlink(text_file)
+
+            if result.returncode != 0:
+                raise RuntimeError(f"espeak-ng exited {result.returncode}: {result.stderr.strip()}")
 
             if not output_path.exists() or output_path.stat().st_size == 0:
-                raise RuntimeError(f"pyttsx3 did not produce a valid file at {output_path}")
+                raise RuntimeError(f"espeak-ng did not produce a valid file at {output_path}")
 
             import soundfile as sf
             audio, sr = sf.read(str(output_path))
