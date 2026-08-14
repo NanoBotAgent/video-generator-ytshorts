@@ -20,8 +20,9 @@ soundfile==0.12.1
 scipy==1.13.0
 numpy==1.26.0
 
-# TTS (CPU-viable local voice, see README for why Step-Audio-EditX isn't used here)
-pyttsx3==2.90
+# TTS: no Python package needed - scripts/01_tts.py calls the espeak-ng CLI directly
+# (installed as a system package in the workflow). See README for why pyttsx3/
+# Step-Audio-EditX aren't used here.
 
 # Utilities
 tqdm==4.66.0
