@@ -2,7 +2,7 @@
 """
 Visuals Module - Renders procedural gradient video using ffmpeg lavfi.
 Generates 1080x1920 @ 60fps visuals.mp4 matching voiceover duration.
-Uses ffmpeg color/gradients filter - no Chromium/timecut needed (works on CPU CI).
+Uses ffmpeg color/geq filter - no Chromium/timecut needed (works on CPU CI).
 """
 
 import os
@@ -53,16 +53,23 @@ class VisualsRenderer:
             output_path = self.output_dir / "visuals.mp4"
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Build ffmpeg lavfi filter graph for animated gradients
-            # Multiple gradient layers with animation
+            # Animated gradient via geq: each channel is a smooth sine function of
+            # position and time, with per-channel phase offsets (120 degrees apart,
+            # like a hue rotation) so the colors drift between navy/purple/pink.
+            # This replaced an earlier version built from two independently-seeded
+            # `gradients` source filters combined with stacked `overlay` blends -
+            # that combo visibly flickered, since each `gradients` layer picks its
+            # own random walk with no shared seed, and overlay blend mode amplifies
+            # small per-frame differences between them. geq has no randomness at
+            # all: the color at a given pixel is a continuous function of time, so
+            # frame-to-frame change is always tiny and smooth - no flicker possible.
             filter_complex = (
-                f"color=c=0x1a1a2e:size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f}[bg];"
-                f"gradients=size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f}:"
-                f"c0=0x16213e:c1=0x0f3460:c2=0xe94560:c3=0x533483:speed=0.1[grad1];"
-                f"gradients=size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f}:"
-                f"c0=0x0f0f23:c1=0x1a1a2e:c2=0x16213e:c3=0x0f3460:speed=0.05[grad2];"
-                f"[bg][grad1]blend=all_mode=overlay:all_opacity=0.3[tmp];"
-                f"[tmp][grad2]blend=all_mode=overlay:all_opacity=0.2[vout]"
+                f"color=c=black:size={self.width}x{self.height}:rate={self.fps}:duration={duration:.3f},"
+                "geq="
+                "r='clip(50+40*sin(2*PI*(X/W*0.6+Y/H*0.3+T*0.04)),0,255)':"
+                "g='clip(45+35*sin(2*PI*(X/W*0.5+Y/H*0.4+T*0.035)+2.094),0,255)':"
+                "b='clip(90+60*sin(2*PI*(X/W*0.4+Y/H*0.5+T*0.03)+4.188),0,255)'"
+                "[vout]"
             )
 
             cmd = [
