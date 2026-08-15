@@ -91,7 +91,6 @@ class CaptionGenerator:
                 generated_ids = self.model.generate(
                     **inputs,
                     max_new_tokens=448,  # ~6.5 tokens/sec * max audio length
-                    return_timestamps=False,
                 )
 
             transcription = self.processor.batch_decode(
@@ -173,7 +172,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 current_word = word["word"]
                 after_text = " ".join(w["word"] for w in words[i+1:])
 
-                line_text = f"{before_text} {{\rHighlight}}{current_word}{{\rDefault}} {after_text}".strip()
+                line_text = f"{before_text} {{\\rHighlight}}{current_word}{{\\rDefault}} {after_text}".strip()
 
                 events.append(
                     f"Dialogue: 0,{start_ms},{end_ms},Default,,0,0,0,,{line_text}"
