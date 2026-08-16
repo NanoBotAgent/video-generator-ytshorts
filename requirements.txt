@@ -21,8 +21,9 @@ scipy==1.13.0
 numpy==1.26.0
 
 # TTS: no Python package needed - scripts/01_tts.py calls the espeak-ng CLI directly
-# (installed as a system package in the workflow). See README for why pyttsx3/
-# Step-Audio-EditX aren't used here.
+# (installed as a system package in the workflow). pyttsx3 was tried first but its
+# ctypes driver silently no-ops in headless CI - see scripts/01_tts.py. See README
+# for why Step-Audio-EditX isn't used here either.
 
 # Utilities
 tqdm==4.66.0
