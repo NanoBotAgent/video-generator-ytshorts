@@ -4,7 +4,7 @@ A fully automated, open-source short-form vertical video generator designed to r
 
 ## Features
 
-- **TTS**: pyttsx3 (system TTS engine, `espeak-ng` backend) - deterministic, CPU-native voiceover generation
+- **TTS**: espeak-ng (CLI-invoked directly) - deterministic, CPU-native voiceover generation
 - **BGM**: Facebook MusicGen-Small (300M) for ambient background music, matched to voiceover duration
 - **Captions**: UsefulSensors Moonshine Base (61M) for word-level transcription → CapCut/TikTok-style `.ass` subtitles
 - **Visuals**: 1080x1920 @ 60fps animated gradient background rendered with FFmpeg lavfi filter graph (no browser/Chromium needed)
@@ -56,7 +56,7 @@ Edit `config.json`:
 }
 ```
 
-Note: `[sigh]`, `[laugh]`, etc. in `script_text` are stripped (not voiced) since pyttsx3 has no equivalent for them - they are just kept as writing hints for now.
+Note: `[sigh]`, `[laugh]`, etc. in `script_text` are stripped (not voiced) since espeak-ng has no equivalent for them - they are just kept as writing hints for now.
 
 ## Pipeline Architecture
 
@@ -103,7 +103,7 @@ output/
 ## Requirements
 
 - **Python**: 3.10+ (tested on 3.10, 3.11)
-- **System**: ffmpeg, libass-dev, fontconfig, espeak-ng (for pyttsx3)
+- **System**: ffmpeg, libass-dev, fontconfig, espeak-ng
 - **RAM**: <8 GB peak (fits comfortably in GHA 16 GB runner)
 - **Disk**: ~3 GB for model weights (cached across runs)
 
@@ -111,7 +111,7 @@ output/
 
 | Component | Model | Size | Notes |
 |-----------|-------|------|-------|
-| TTS | pyttsx3 (espeak-ng) | N/A | No model download - system TTS engine |
+| TTS | espeak-ng | N/A | No model download - system TTS engine |
 | BGM | MusicGen-Small | ~2 GB | FP32 (300M params) |
 | Captions | Moonshine Base | ~120 MB | FP32 (61M params) |
 
@@ -167,4 +167,4 @@ MIT License - See LICENSE file for details.
 
 - [MusicGen](https://huggingface.co/facebook/musicgen-small) by Meta/Facebook
 - [Moonshine](https://github.com/usefulsensors/moonshine) by UsefulSensors
-- [pyttsx3](https://github.com/nateshmbhat/pyttsx3) for offline TTS
+- [espeak-ng](https://github.com/espeak-ng/espeak-ng) for offline TTS
