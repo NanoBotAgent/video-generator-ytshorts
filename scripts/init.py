@@ -5,7 +5,7 @@ Downloads and caches all required models to avoid repeated downloads in CI.
 
 NOTE: Step-Audio-EditX (originally planned for TTS) is no longer downloaded here - it
 requires a GPU with 12GB+ VRAM and a separate vocoder pipeline unavailable on free GitHub
-Actions CPU runners. TTS uses pyttsx3 instead, which needs no model download. See
+Actions CPU runners. TTS calls the espeak-ng CLI directly instead, which needs no model download. See
 scripts/01_tts.py and the README for details.
 """
 
