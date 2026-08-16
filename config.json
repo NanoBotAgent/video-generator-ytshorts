@@ -8,7 +8,7 @@
   "voiceover_sample_rate": 44100,
   "bgm_duration_buffer_seconds": 2,
   "output_dir": "output",
-  "tts_model": "pyttsx3",
+  "tts_model": "espeak-ng",
   "bgm_model": "facebook/musicgen-small",
   "caption_model": "UsefulSensors/moonshine-base",
   "ffmpeg_preset": "fast",
