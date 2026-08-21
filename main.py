@@ -71,10 +71,16 @@ def run_step(script_name: str, description: str) -> Tuple[bool, float]:
 
         if result.returncode == 0:
             logger.info(f"[STEP] COMPLETE: {description} in {elapsed:.1f}s")
+            # NOTE: this used to be logger.debug(), which is invisible because the
+            # root logger is configured at INFO level - meaning every script's stdout
+            # (which model ran, timings, warnings) was silently dropped on success and
+            # only showed up if the step failed. Always surface it now.
             if result.stdout:
+                logger.info("  --- step output ---")
                 for line in result.stdout.strip().split('\n'):
                     if line.strip():
-                        logger.debug(f"  {line}")
+                        logger.info(f"  {line}")
+                logger.info("  --------------------")
             return True, elapsed
         else:
             logger.error(f"[STEP] FAILED: {description} after {elapsed:.1f}s")
