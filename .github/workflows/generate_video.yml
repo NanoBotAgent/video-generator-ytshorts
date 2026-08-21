@@ -71,11 +71,27 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install --no-cache-dir -r requirements.txt
-          pip list | grep -E "(torch|transformers|musicgen|moonshine|librosa|soundfile)"
+          pip list | grep -E "(torch|transformers|musicgen|moonshine|librosa|soundfile|fish-audio-sdk)"
 
       - name: Initialize models
         run: |
           python scripts/init.py
+
+      - name: Debug - pre-flight check
+        run: |
+          echo "=== Pre-flight debug info ==="
+          echo "Python: $(python --version)"
+          echo "espeak-ng: $(espeak-ng --version)"
+          echo "ffmpeg: $(ffmpeg -version | head -1)"
+          if [ -n "${{ secrets.FISH_API_KEY }}" ]; then
+            echo "FISH_API_KEY: set (Fish Audio S2.1 Pro will be used for TTS)"
+          else
+            echo "FISH_API_KEY: NOT SET - TTS will fall back to local espeak-ng (robotic voice)"
+            echo "  -> Add a free API key from https://fish.audio as a repo secret named FISH_API_KEY to fix this."
+          fi
+          echo "Disk space:"
+          df -h /
+          echo "=============================="
 
       - name: Override config from inputs (if provided)
         if: github.event.inputs.script_text != '' || github.event.inputs.bgm_prompt != ''
@@ -94,10 +110,29 @@ jobs:
         run: |
           python main.py
         env:
+          FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
           KERAS_BACKEND: torch
           TOKENIZERS_PARALLELISM: false
           OMP_NUM_THREADS: 4
           MKL_NUM_THREADS: 4
+
+      - name: Debug - TTS output check
+        if: always()
+        run: |
+          echo "=== TTS debug info ==="
+          if [ -f output/tts_engine.txt ]; then
+            echo "TTS engine actually used: $(cat output/tts_engine.txt)"
+          else
+            echo "TTS engine marker file missing (01_tts.py may have failed before writing it)"
+          fi
+          if [ -f output/voiceover.wav ]; then
+            echo "voiceover.wav:"
+            ls -lh output/voiceover.wav
+            ffprobe -v error -show_entries format=duration:stream=sample_rate,channels,codec_name -of default=noprint_wrappers=0 output/voiceover.wav
+          else
+            echo "voiceover.wav not found"
+          fi
+          echo "======================="
 
       - name: Verify output
         run: |
@@ -136,7 +171,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          if [ -f output/voiceover.wav ]; then echo "| TTS (espeak-ng) | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| TTS (espeak-ng) | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
+          TTS_ENGINE="unknown"
+          if [ -f output/tts_engine.txt ]; then TTS_ENGINE=$(cat output/tts_engine.txt); fi
+          if [ -f output/voiceover.wav ]; then echo "| TTS ($TTS_ENGINE) | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| TTS ($TTS_ENGINE) | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
           if [ -f output/bgm.wav ]; then echo "| BGM (MusicGen-Small) | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| BGM (MusicGen-Small) | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
           if [ -f output/captions.ass ]; then echo "| Captions (Moonshine) | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| Captions (Moonshine) | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
           if [ -f output/visuals.mp4 ]; then echo "| Visuals (ffmpeg lavfi) | [OK] |" >> $GITHUB_STEP_SUMMARY; else echo "| Visuals (ffmpeg lavfi) | [FAIL] |" >> $GITHUB_STEP_SUMMARY; fi
